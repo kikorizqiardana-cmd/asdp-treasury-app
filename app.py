@@ -19,7 +19,7 @@ def get_market_rate():
         return 6.50
 
 current_sbn = st.sidebar.number_input("Benchmark SBN (%)", value=get_market_rate())
-threshold = st.sidebar.slider("Threshold Pindah Dana (%)", 0.0, 2.0, 0.5)
+threshold = st.sidebar.slider("Threshold Pindah Dana (%)", 0.0, 10.0, 0.5)
 
 if uploaded_file:
     try:
