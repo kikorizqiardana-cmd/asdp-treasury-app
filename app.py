@@ -8,7 +8,7 @@ import pytz
 
 # Konfigurasi Halaman
 st.set_page_config(page_title="ASDP ALM Command Center", layout="wide")
-st.title("🚢 ASDP Integrated Treasury & ALM Dashboard")
+st.title("🚢 ASDP Integrated Treasury & ALM Strategic Dashboard")
 
 # --- FUNGSI MARKET DATA ---
 def get_live_market_data():
@@ -22,7 +22,7 @@ def get_live_market_data():
         source = "Default/Manual"
     return val, source
 
-# --- SIDEBAR: KONFIGURASI PERSIS GAMBAR ---
+# --- SIDEBAR ---
 st.sidebar.header("⚙️ Market Intelligence")
 sbn_live, source_status = get_live_market_data()
 current_sbn = st.sidebar.number_input("Benchmark SBN 10Y (%)", value=sbn_live, step=0.01)
@@ -32,76 +32,63 @@ st.sidebar.markdown("---")
 st.sidebar.header("🛡️ Credit Risk Simulation")
 rating_pilihan = st.sidebar.selectbox("Pilih Rating Simulasi:", ["AAA", "AA+", "AA", "A"])
 risk_notes = {
-    "AAA": {"spread": 80, "desc": "🛡️ Stabil & Aman. Kapasitas sangat kuat. Risiko gagal bayar hampir nol."},
-    "AA+": {"spread": 100, "desc": "✅ Sangat Kuat. Tahan terhadap perubahan ekonomi."},
-    "AA": {"spread": 120, "desc": "✅ Kualitas Tinggi. Kapasitas kuat, namun sedikit rentan ekonomi."},
-    "A": {"spread": 260, "desc": "🚨 Investasi Layak, tapi Sensitif. Risiko downgrade lebih tinggi."}
+    "AAA": {"spread": 80, "desc": "🛡️ Stabil & Aman. Kapasitas sangat kuat."},
+    "AA+": {"spread": 100, "desc": "✅ Sangat Kuat. Tahan guncangan."},
+    "AA": {"spread": 120, "desc": "✅ Kualitas Tinggi. Kapasitas kuat."},
+    "A": {"spread": 260, "desc": "🚨 Sensitif. Risiko downgrade lebih tinggi."}
 }
 selected_spread = st.sidebar.slider(f"Spread {rating_pilihan} (bps)", 30, 450, risk_notes[rating_pilihan]["spread"])
 est_yield_bond = current_sbn + (selected_spread/100)
 
 st.sidebar.markdown("---")
-file_funding = st.sidebar.file_uploader("Upload Data Funding (Deposito)", type=["xlsx"])
-file_lending = st.sidebar.file_uploader("Upload Data Lending (Anak Usaha)", type=["xlsx"])
+file_funding = st.sidebar.file_uploader("1. Upload Data Funding (Deposito)", type=["xlsx"])
+file_lending = st.sidebar.file_uploader("2. Upload Data Lending (Anak Usaha)", type=["xlsx"])
 
-# Inisialisasi DataFrame Global
+# Inisialisasi Data Global
 df_f = pd.DataFrame()
 df_l = pd.DataFrame()
 
-# --- TAB SYSTEM ---
-tab1, tab2, tab3 = st.tabs(["💰 Funding Monitoring (Full)", "📈 Lending Monitoring (Full)", "📑 ALM Resume (Pokok + Bunga)"])
+tab1, tab2, tab3 = st.tabs(["💰 Funding Monitoring", "📈 Lending Monitoring", "📊 ALM Resume (Pokok + Bunga)"])
 
 # ==========================================
-# TAB 1: FUNDING MONITORING
+# TAB 1: FUNDING (VERSI MEWAH)
 # ==========================================
 with tab1:
     if file_funding:
         try:
             df_f = pd.read_excel(file_funding)
-            df_f.columns = [c.strip() for c in df_f.columns]
             df_f['Jatuh_Tempo'] = pd.to_datetime(df_f['Jatuh_Tempo'], errors='coerce')
             df_f['Net_Yield'] = df_f['Rate'] * 0.8
             net_sbn = current_sbn * 0.9
             net_sim = est_yield_bond * 0.9
             df_f['Gap_vs_SBN'] = net_sbn - df_f['Net_Yield']
-            df_f['Sisa_Hari'] = (df_f['Jatuh_Tempo'] - datetime.now()).dt.days
-
-            # Metrics
+            
             m1, m2, m3 = st.columns(3)
-            total_f = df_f['Nominal'].sum()
-            m1.metric("Total Portfolio", f"Rp {total_f:,.0f}")
+            m1.metric("Total Funding", f"Rp {df_f['Nominal'].sum():,.0f}")
             m2.metric("SBN Net (Risk-Free)", f"{net_sbn:.2f}%")
-            m3.metric(f"Simulasi Net {rating_pilihan}", f"{net_sim:.2f}%")
-
-            # Risk Assessment Box
-            st.info(f"🛡️ **PROFIL RISIKO {rating_pilihan}:** {risk_notes[rating_pilihan]['desc']}")
-
-            # Potensi Cuan
-            st.divider()
-            c1, c2 = st.columns(2)
+            
             df_pindah = df_f[df_f['Gap_vs_SBN'] >= threshold]
-            pot_sbn = (df_pindah['Nominal'] * (df_pindah['Gap_vs_SBN']/100)).sum()
-            pot_sim = (df_pindah['Nominal'] * (net_sim - df_pindah['Net_Yield'])/100).sum()
-            c1.metric("Cuan Tambahan (Pindah SBN)", f"Rp {pot_sbn:,.0f}")
-            c2.metric(f"Cuan Tambahan (Pindah {rating_pilihan})", f"Rp {pot_sim:,.0f}")
+            cuan_hilang = (df_pindah['Nominal'] * (df_pindah['Gap_vs_SBN']/100)).sum()
+            m3.metric("Potensi Tambahan Cuan", f"Rp {cuan_hilang:,.0f}")
 
-            # Visualisasi
+            st.info(f"🛡️ **Rating {rating_pilihan}:** {risk_notes[rating_pilihan]['desc']}")
+
             v1, v2 = st.columns([2, 1])
             with v1:
-                fig_f = px.bar(df_f, x='Nomor_Bilyet', y='Net_Yield', color='Gap_vs_SBN', color_continuous_scale='RdYlGn_r', title="Yield per Bilyet vs Benchmark")
+                fig_f = px.bar(df_f, x='Nomor_Bilyet', y='Net_Yield', color='Gap_vs_SBN', 
+                               color_continuous_scale='RdYlGn_r', title="Yield Deposito vs SBN Line")
                 fig_f.add_hline(y=net_sbn, line_dash="dash", line_color="blue")
                 st.plotly_chart(fig_f, use_container_width=True)
             with v2:
-                fig_pie_f = px.pie(df_f, values='Nominal', names='Bank', title="Konsentrasi Dana")
-                st.plotly_chart(fig_pie_f, use_container_width=True)
-
-            st.subheader("📑 Detail Tabel Inventori")
-            st.dataframe(df_f.style.background_gradient(subset=['Gap_vs_SBN'], cmap='Reds'), use_container_width=True)
+                fig_pie = px.pie(df_f, values='Nominal', names='Bank', title="Konsentrasi Bank")
+                st.plotly_chart(fig_pie, use_container_width=True)
         except Exception as e:
             st.error(f"Error Funding: {e}")
+    else:
+        st.info("Upload Data Deposito di sidebar.")
 
 # ==========================================
-# TAB 2: LENDING MONITORING
+# TAB 2: LENDING
 # ==========================================
 with tab2:
     if file_lending:
@@ -111,40 +98,66 @@ with tab2:
             df_l['Spread'] = df_l['Lending_Rate (%)'] - df_l['Cost_of_Fund (%)']
             
             l1, l2, l3 = st.columns(3)
-            total_l = df_l['Nominal_Lending'].sum()
-            l1.metric("Total Penyaluran", f"Rp {total_l:,.0f}")
+            l1.metric("Total Penyaluran", f"Rp {df_l['Nominal_Lending'].sum():,.0f}")
             l2.metric("Avg. Lending Rate", f"{df_l['Lending_Rate (%)'].mean():.2f}%")
-            l3.metric("Avg. Margin (Spread)", f"{df_l['Spread'].mean():.2f}%")
+            l3.metric("Avg. Spread (Margin)", f"{df_l['Spread'].mean():.2f}%")
 
-            # Chart
             fig_l = go.Figure()
-            fig_l.add_trace(go.Bar(x=df_l['Debitur'], y=df_l['Lending_Rate (%)'], name='Lending Rate', marker_color='#00cc96'))
-            fig_l.add_trace(go.Bar(x=df_l['Debitur'], y=df_l['Cost_of_Fund (%)'], name='Cost of Fund', marker_color='#ef553b'))
-            fig_l.update_layout(barmode='group', title="Lending Rate vs CoF")
+            fig_l.add_trace(go.Bar(x=df_l['Debitur'], y=df_l['Lending_Rate (%)'], name='Lending Rate', marker_color='green'))
+            fig_l.add_trace(go.Bar(x=df_l['Debitur'], y=df_l['Cost_of_Fund (%)'], name='Cost of Fund', marker_color='red'))
             st.plotly_chart(fig_l, use_container_width=True)
-
-            st.subheader("📑 Detail Tabel Lending")
-            st.dataframe(df_l.style.background_gradient(subset=['Spread'], cmap='RdYlGn'), use_container_width=True)
         except Exception as e:
             st.error(f"Error Lending: {e}")
 
 # ==========================================
-# TAB 3: ALM RESUME (POKOK + BUNGA)
+# TAB 3: ALM RESUME (COVER POKOK + BUNGA)
 # ==========================================
 with tab3:
     if not df_f.empty and not df_l.empty:
-        st.subheader("📑 Resume Strategic: Cash Flow Coverage Analysis")
+        st.subheader("📋 Resume ALM: Kemampuan Bayar Pokok & Bunga")
         
-        # --- PERHITUNGAN BULANAN (POKOK + BUNGA) ---
-        # Asumsi tenor pinjaman rata-rata 12 bulan (Bisa diatur jika ada kolom Tenor)
-        tenor_asumsi = 12 
-        
-        # Inflow dari Anak Usaha (Lending)
+        # Simulasi Bulanan (Asumsi Tenor Rata-rata 12 Bulan jika tidak ada kolom Tenor)
+        # Inflow = Bunga dari Debitur + Cicilan Pokok
         inflow_bunga = (df_l['Nominal_Lending'] * (df_l['Lending_Rate (%)']/100) / 12).sum()
-        inflow_pokok = (df_l['Nominal_Lending'] / tenor_asumsi).sum()
+        inflow_pokok = (df_l['Nominal_Lending'] / 12).sum()
         total_inflow = inflow_bunga + inflow_pokok
         
-        # Outflow ke Bank (Funding/CoF)
-        # Untuk deposito biasanya bunga bulanan, pokok di akhir (bullet). 
-        # Namun untuk ALM konservatif, kita hitung beban bunganya.
-        outflow_bunga = (df_l['Nominal_Lending'] * (df_l['Cost
+        # Outflow = Bunga ke Bank + Estimasi Cicilan Pokok ke Bank
+        outflow_bunga = (df_l['Nominal_Lending'] * (df_l['Cost_of_Fund (%)']/100) / 12).sum()
+        outflow_pokok = (df_l['Nominal_Lending'] / 12).sum() 
+        total_outflow = outflow_bunga + outflow_pokok
+        
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Total Inflow (Pokok+Bunga)", f"Rp {total_inflow:,.0f}")
+        c2.metric("Total Outflow (Pokok+Bunga)", f"Rp {total_outflow:,.0f}")
+        
+        net_cashflow = total_inflow - total_outflow
+        c3.metric("Net Monthly Cashflow", f"Rp {net_cashflow:,.0f}", 
+                  delta=f"{(total_inflow/total_outflow):.2f}x Cover")
+
+        # Visualisasi Strategi
+        st.markdown("---")
+        st.subheader("📊 Liquidity Strategy Recommendation")
+        
+        col_res1, col_res2 = st.columns([1, 1])
+        with col_res1:
+            coverage = total_inflow / total_outflow
+            if coverage >= 1.1:
+                st.success(f"✅ **CASHFLOW AMAN**: Inflow dari Debitur sanggup menutup Pokok + Bunga ke Bank (Ratio: {coverage:.2f}x)")
+            elif coverage >= 1.0:
+                st.warning(f"⚠️ **CASHFLOW KETAT**: Inflow mepet dengan Outflow. Hati-hati jika ada keterlambatan bayar dari Debitur.")
+            else:
+                st.error(f"🚨 **DEFISIT CASHFLOW**: Pendapatan dari Debitur TIDAK CUKUP bayar Pokok + Bunga!")
+            
+            st.info(f"Sisa dana menganggur di Funding: **Rp {df_f['Nominal'].sum() - df_l['Nominal_Lending'].sum():,.0f}**. Rekomendasi: Pindahkan ke SBN Net ({net_sbn:.2f}%)")
+
+        with col_res2:
+            fig_res = go.Figure(data=[
+                go.Bar(name='Inflow (Anak Usaha)', x=['Bulanan'], y=[total_inflow], marker_color='green'),
+                go.Bar(name='Outflow (Kewajiban)', x=['Bulanan'], y=[total_outflow], marker_color='red')
+            ])
+            fig_res.update_layout(title="Analisis Kecukupan Arus Kas Bulanan", barmode='group')
+            st.plotly_chart(fig_res, use_container_width=True)
+
+    else:
+        st.info("Harap upload kedua file (Funding & Lending) untuk melihat analisa cashflow.")
