@@ -7,8 +7,8 @@ from datetime import datetime
 import pytz
 
 # Konfigurasi Halaman
-st.set_page_config(page_title="ASDP ALM Dashboard", layout="wide")
-st.title("🚢 ASDP Integrated ALM Command Center")
+st.set_page_config(page_title="ASDP Treasury Command Center", layout="wide")
+st.title("🚢 ASDP Integrated Treasury & ALM Command Center")
 
 # --- FUNGSI MARKET DATA ---
 def get_live_market_data():
@@ -22,21 +22,32 @@ def get_live_market_data():
         source = "Default/Manual"
     return val, source
 
-# --- SIDEBAR: KONFIGURASI GLOBAL ---
+# --- SIDEBAR: GLOBAL SETTINGS ---
 st.sidebar.header("⚙️ Market Intelligence")
 sbn_live, source_status = get_live_market_data()
 current_sbn = st.sidebar.number_input("Benchmark SBN 10Y (%)", value=sbn_live, step=0.01)
+threshold = st.sidebar.slider("Threshold Pindah Dana (%)", 0.0, 10.0, 0.5)
 
 st.sidebar.markdown("---")
-st.sidebar.header("📂 Data Management")
+st.sidebar.header("🏢 Risk Simulation (Rating)")
+rating_pilihan = st.sidebar.selectbox("Simulasi Pindah ke Rating:", ["AAA", "AA+", "AA", "A"])
+risk_notes = {
+    "AAA": {"spread": 80, "desc": "🛡️ Stabil & Aman. Kapasitas sangat kuat."},
+    "AA+": {"spread": 100, "desc": "✅ Sangat Kuat. Tahan guncangan ekonomi."},
+    "AA": {"spread": 120, "desc": "✅ Kualitas Tinggi. Kapasitas kuat."},
+    "A": {"spread": 260, "desc": "🚨 Investasi Layak, tapi Sensitif. Risiko downgrade lebih tinggi."}
+}
+est_yield_bond = current_sbn + (risk_notes[rating_pilihan]['spread']/100)
+
+st.sidebar.markdown("---")
 file_funding = st.sidebar.file_uploader("1. Upload Data Funding (Deposito)", type=["xlsx"])
-file_lending = st.sidebar.file_uploader("2. Upload Data Lending (Penyaluran)", type=["xlsx"])
+file_lending = st.sidebar.file_uploader("2. Upload Data Lending (Anak Usaha)", type=["xlsx"])
 
 # --- TAB SYSTEM ---
-tab1, tab2 = st.tabs(["💰 Funding Monitoring", "📈 Lending & Gap Analysis"])
+tab1, tab2 = st.tabs(["💰 Funding Monitoring (Full Version)", "📈 Lending & Gap Analysis"])
 
 # ==========================================
-# TAB 1: FUNDING MONITORING (LOGIKA LAMA)
+# TAB 1: FUNDING (VERSI LENGKAP GAMBAR 3)
 # ==========================================
 with tab1:
     if file_funding:
@@ -45,85 +56,95 @@ with tab1:
             df_f['Jatuh_Tempo'] = pd.to_datetime(df_f['Jatuh_Tempo'], errors='coerce')
             df_f['Net_Yield'] = df_f['Rate'] * 0.8
             net_sbn = current_sbn * 0.9
+            net_bond = est_yield_bond * 0.9
             
-            # Metrics
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Total Funding", f"Rp {df_f['Nominal'].sum():,.0f}")
-            c2.metric("SBN Net Benchmark", f"{net_sbn:.2f}%")
-            c3.metric("Avg. Funding Rate", f"{df_f['Rate'].mean():.2f}%")
+            # Hitung Gap & Status
+            df_f['Gap_vs_SBN'] = net_sbn - df_f['Net_Yield']
+            df_f['Status'] = df_f['Gap_vs_SBN'].apply(lambda x: 'PINDAHKAN' if x >= threshold else 'TAHAN')
+            df_f['Color'] = df_f['Status'].apply(lambda x: 'red' if x == 'PINDAHKAN' else 'green')
 
-            # Visualization
-            fig_f = px.bar(df_f, x='Nomor_Bilyet', y='Net_Yield', color='Bank', title="Yield Deposito per Bilyet")
-            fig_f.add_hline(y=net_sbn, line_dash="dash", line_color="red")
-            st.plotly_chart(fig_f, use_container_width=True)
+            # Metrics Atas (Gaya Gambar 3)
+            m1, m2, m3 = st.columns(3)
+            total_f = df_f['Nominal'].sum()
+            m1.metric("Total Portfolio", f"Rp {total_f:,.0f}")
+            m2.metric("SBN Yield (Net)", f"{net_sbn:.2f}%")
             
-            st.subheader("📑 Detail Data Funding")
-            st.dataframe(df_f, use_container_width=True)
+            df_pindah = df_f[df_f['Status'] == 'PINDAHKAN']
+            cuan_hilang = (df_pindah['Nominal'] * (df_pindah['Gap_vs_SBN']/100)).sum()
+            m3.metric("Potensi Tambahan Cuan", f"Rp {cuan_hilang:,.0f} / thn", delta_color="inverse")
+
+            # Warning Jatuh Tempo
+            df_f['Sisa_Hari'] = (df_f['Jatuh_Tempo'] - datetime.now()).dt.days
+            near_mat = df_f[df_f['Sisa_Hari'] <= 30].dropna(subset=['Sisa_Hari'])
+            if not near_mat.empty:
+                st.warning(f"⚠️ Ada {len(near_mat)} bilyet jatuh tempo dalam 30 hari!")
+
+            # Grafik Utama
+            v1, v2 = st.columns([2, 1])
+            with v1:
+                fig_f = px.bar(df_f, x='Nomor_Bilyet', y='Net_Yield', color='Status',
+                               color_discrete_map={'PINDAHKAN':'#ef553b', 'TAHAN':'#00cc96'},
+                               title="Yield Net per Bilyet vs SBN Line")
+                fig_f.add_hline(y=net_sbn, line_dash="dash", line_color="blue", annotation_text="SBN Net")
+                st.plotly_chart(fig_f, use_container_width=True)
+            with v2:
+                fig_pie = px.pie(df_f, values='Nominal', names='Bank', title="Distribusi Dana")
+                st.plotly_chart(fig_pie, use_container_width=True)
+
+            st.subheader("📑 Detail Tabel Funding")
+            st.dataframe(df_f.style.background_gradient(subset=['Gap_vs_SBN'], cmap='Reds'), use_container_width=True)
+
         except Exception as e:
             st.error(f"Error Funding: {e}")
     else:
-        st.info("Silakan upload file Data Deposito di sidebar.")
+        st.info("Silakan upload data Deposito.")
 
 # ==========================================
-# TAB 2: LENDING & GAP ANALYSIS (LOGIKA BARU)
+# TAB 2: LENDING & GAP (FIX ERROR)
 # ==========================================
 with tab2:
     if file_lending:
         try:
             df_l = pd.read_excel(file_lending)
-            df_l['Tgl_Jatuh_Tempo'] = pd.to_datetime(df_l['Tgl_Jatuh_Tempo'], errors='coerce')
+            # FIX: Bersihkan nama kolom dari spasi atau karakter aneh
+            df_l.columns = [c.strip() for c in df_l.columns]
             
-            # Hitung Spread (Margin)
-            # Spread = Lending Rate - Cost of Fund
+            # Mapping Kolom agar fleksibel
+            col_map = {
+                'Lending_Rate (%)': 'Lending_Rate (%)',
+                'Cost_of_Fund (%)': 'Cost_of_Fund (%)',
+                'Nominal_Lending': 'Nominal_Lending'
+            }
+            # Cari kolom yang mirip kalau gak ketemu yang pas
+            for k in col_map.keys():
+                if k not in df_l.columns:
+                    for real_col in df_l.columns:
+                        if k.split(' ')[0] in real_col:
+                            df_l.rename(columns={real_col: k}, inplace=True)
+
+            # Hitung Margin/Spread
             df_l['Spread'] = df_l['Lending_Rate (%)'] - df_l['Cost_of_Fund (%)']
             
-            # Weighted Averages
-            total_lending = df_l['Nominal_Lending'].sum()
-            avg_lending_rate = (df_l['Nominal_Lending'] * df_l['Lending_Rate (%)']).sum() / total_lending
-            avg_cof = (df_l['Nominal_Lending'] * df_l['Cost_of_Fund (%)']).sum() / total_lending
-            total_margin = avg_lending_rate - avg_cof
-
             # Metrics
-            st.subheader("🎯 Ringkasan Portofolio Lending")
             l1, l2, l3 = st.columns(3)
-            l1.metric("Total Penyaluran (Lending)", f"Rp {total_lending:,.0f}")
-            l2.metric("Avg. Lending Rate", f"{avg_lending_rate:.2f}%")
-            l3.metric("Net Interest Margin (NIM)", f"{total_margin:.2f}%", delta=f"{total_margin:.2f}%", delta_color="normal")
+            total_l = df_l['Nominal_Lending'].sum()
+            avg_l_rate = (df_l['Nominal_Lending'] * df_l['Lending_Rate (%)']).sum() / total_l
+            avg_cof = (df_l['Nominal_Lending'] * df_l['Cost_of_Fund (%)']).sum() / total_l
+            l1.metric("Total Penyaluran", f"Rp {total_l:,.0f}")
+            l2.metric("Avg. Lending Rate", f"{avg_l_rate:.2f}%")
+            l3.metric("Net Interest Margin (NIM)", f"{(avg_l_rate - avg_cof):.2f}%")
 
-            # Visualization: Spread per Debitur
-            st.markdown("---")
-            st.subheader("📊 Analisis Margin per Debitur")
-            
-            # Grafik Waterfall atau Grouped Bar untuk Spread
-            fig_spread = go.Figure()
-            fig_spread.add_trace(go.Bar(x=df_l['Debitur'], y=df_l['Lending_Rate (%)'], name='Lending Rate', marker_color='green'))
-            fig_spread.add_trace(go.Bar(x=df_l['Debitur'], y=df_l['Cost_of_Fund (%)'], name='Cost of Fund', marker_color='red'))
-            fig_spread.update_layout(barmode='group', title="Lending Rate vs Cost of Fund per Anak Usaha")
-            st.plotly_chart(fig_spread, use_container_width=True)
+            # Visualisasi Gap
+            fig_l = go.Figure()
+            fig_l.add_trace(go.Bar(x=df_l['Debitur'], y=df_l['Lending_Rate (%)'], name='Lending Rate', marker_color='#00cc96'))
+            fig_l.add_trace(go.Bar(x=df_l['Debitur'], y=df_l['Cost_of_Fund (%)'], name='Cost of Fund', marker_color='#ef553b'))
+            fig_l.update_layout(barmode='group', title="Spread per Debitur (Lending vs CoF)")
+            st.plotly_chart(fig_l, use_container_width=True)
 
-            # Analisis Gap & Risiko
-            st.markdown("---")
-            st.subheader("⚠️ Early Warning & Gap Analysis")
-            
-            col_a, col_b = st.columns(2)
-            with col_a:
-                # Cek pinjaman yang marginnya tipis (< 1%)
-                low_margin = df_l[df_l['Spread'] < 1.0]
-                if not low_margin.empty:
-                    st.error(f"Ada {len(low_margin)} Debitur dengan margin sangat tipis (< 1%)!")
-                    st.dataframe(low_margin[['Debitur', 'Spread', 'Bank_Sumber_Dana']])
-                else:
-                    st.success("Semua margin penyaluran dana masih di atas 1%. Aman!")
-            
-            with col_b:
-                # Konsentrasi Debitur
-                fig_pie_l = px.pie(df_l, values='Nominal_Lending', names='Debitur', title="Distribusi Eksposur Debitur")
-                st.plotly_chart(fig_pie_l, use_container_width=True)
-
-            st.subheader("📑 Detail Inventori Lending")
+            st.subheader("📑 Detail Tabel Lending")
             st.dataframe(df_l.style.background_gradient(subset=['Spread'], cmap='RdYlGn'), use_container_width=True)
 
         except Exception as e:
-            st.error(f"Error Lending: {e}")
+            st.error(f"Error Lending: {e}. Pastikan nama kolom di Excel sesuai (Debitur, Nominal_Lending, Lending_Rate (%), Cost_of_Fund (%))")
     else:
-        st.info("Silakan upload file Data Lending di sidebar.")
+        st.info("Silakan upload data Lending.")
