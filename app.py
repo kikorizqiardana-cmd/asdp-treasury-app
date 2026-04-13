@@ -6,7 +6,8 @@ import plotly.graph_objects as go
 from streamlit_lottie import st_lottie
 import requests
 import time
-from datetime import datetime, timedelta
+# --- BARIS INI YANG WAJIB ADA UNTUK FIX ERROR TADI ---
+from datetime import datetime, timedelta 
 import base64
 import os
 
@@ -28,7 +29,7 @@ encoded_logo = get_base64_image(logo_path)
 def clean_numeric_robust(series):
     def process_val(val):
         val = str(val).strip().replace('Rp', '').replace('%', '').replace(' ', '')
-        if not val or val == 'nan': return "0"
+        if not val or val == 'nan' or val == 'None': return "0"
         commas, dots = val.count(','), val.count('.')
         if commas > 0 and dots > 0:
             if val.rfind(',') > val.rfind('.'): return val.replace('.', '').replace(',', '.')
@@ -50,7 +51,10 @@ def load_data():
         df_l = pd.read_csv(base_url + "Lending")
         df_f.columns = [c.strip() for c in df_f.columns]
         df_l.columns = [c.strip() for c in df_l.columns]
+        
+        # Kreditur Correction
         if 'Debitur' in df_l.columns: df_l.rename(columns={'Debitur': 'Kreditur'}, inplace=True)
+        
         for df in [df_f, df_l]:
             for col in ['Nominal', 'Rate (%)', 'CoF (%)']:
                 if col in df.columns: df[col] = clean_numeric_robust(df[col])
@@ -85,36 +89,35 @@ st.title(f"🚢 ASDP Treasury Command Center")
 tab1, tab2, tab3 = st.tabs(["💰 Funding Monitor", "💸 Loan Payment (Debt)", "📊 ALM Net Position"])
 
 # ==========================================
-# WS 1: FUNDING MONITOR (SESUAI GAMBAR)
+# WS 1: FUNDING MONITOR (LAYOUT SESUAI PIC)
 # ==========================================
 with tab1:
     st.header(f"Funding Intelligence - {selected_month}")
-    
     if not df_f.empty:
-        # Perhitungan
         df_f['Net_Yield_Rate'] = df_f['Rate (%)'] * 0.8
         net_sbn = current_sbn * 0.9
         df_f['Monthly_Yield'] = (df_f['Nominal'] * (df_f['Rate (%)'] / 100)) / 12
         
-        # 1. METRICS (BARIS ATAS)
+        # 1. METRICS ATAS
         m1, m2, m3 = st.columns(3)
         m1.metric("Total Placement", f"Rp {df_f['Nominal'].sum():,.0f}")
         m2.metric("Total Yield Bulanan (B)", f"Rp {df_f['Monthly_Yield'].sum()/1e9:.2f} B")
-        m3.metric("Avg. Rate (Gross)", f"{df_f['Rate (%)'].mean():.2f}%")
+        m3.metric("Avg Rate (Gross)", f"{df_f['Rate (%)'].mean():.2f}%")
 
-        # 2. ALERTS (DENGAN SCROLL)
+        # 2. ALERTS (SCROLLABLE)
         st.subheader("🔔 Treasury Alerts")
-        col_a1, col_a2 = st.columns(2)
-        with col_a1:
+        c_a1, c_a2 = st.columns(2)
+        with c_a1:
             st.markdown("**🚨 Underperform vs SBN Net**")
             with st.container(height=180):
                 under = df_f[df_f['Net_Yield_Rate'] < net_sbn]
                 if not under.empty:
                     for _, row in under.iterrows(): st.error(f"**{row['Bank']}** | Gap: {net_sbn - row['Net_Yield_Rate']:.2f}%")
                 else: st.success("Rate aman.")
-        with col_a2:
+        with c_a2:
             st.markdown("**⏳ Jatuh Tempo (H-7)**")
             with st.container(height=180):
+                # FIX: 'datetime' dipanggil di sini
                 today = datetime.now()
                 soon = df_f[(df_f['Jatuh_Tempo'] >= today) & (df_f['Jatuh_Tempo'] <= today + timedelta(days=7))]
                 if not soon.empty:
@@ -123,8 +126,7 @@ with tab1:
 
         st.divider()
 
-        # 3. GRAFIK (BERDAMPINGAN)
-        st.markdown("### 📊 Analisis Penerimaan & Konsentrasi")
+        # 3. GRAFIK BERDAMPINGAN
         c1, c2 = st.columns([2, 1])
         with c1:
             df_bank = df_f.groupby('Bank')['Monthly_Yield'].sum().reset_index()
@@ -134,10 +136,10 @@ with tab1:
             fig.update_layout(showlegend=False, yaxis_title="Rp Billion")
             st.plotly_chart(fig, use_container_width=True)
         with c2:
-            st.plotly_chart(px.pie(df_f, values='Nominal', names='Bank', hole=0.4, title="Komposisi Dana Bilyet"), use_container_width=True)
+            st.plotly_chart(px.pie(df_f, values='Nominal', names='Bank', hole=0.4, title="Konsentrasi Dana"), use_container_width=True)
 
-        # 4. TABEL (PALING BAWAH)
-        with st.expander("Lihat Detail Tabel Data Funding", expanded=True):
+        # 4. TABEL PALING BAWAH
+        with st.expander("Detail Tabel Data Funding", expanded=True):
             df_disp = df_f.copy()
             if 'Jatuh_Tempo' in df_disp.columns:
                 df_disp['Jatuh_Tempo'] = df_disp['Jatuh_Tempo'].dt.strftime('%d-%m-%Y')
@@ -153,22 +155,21 @@ with tab2:
         total_out = df_l['Nominal'].sum()
         bunga_out = df_l[df_l['Tipe'] == 'Bunga']['Nominal'].sum()
         
-        # ALERTS
         c_l1, c_l2 = st.columns(2)
         with c_l1:
-            st.markdown("**🚨 Jadwal Pembayaran H-7 (Siapkan Dana!)**")
+            st.markdown("**🚨 Jadwal Pembayaran H-7 (Penting!)**")
             with st.container(height=180):
                 today = datetime.now()
                 due = df_l[(df_l['Jatuh_Tempo'] >= today) & (df_l['Jatuh_Tempo'] <= today + timedelta(days=7))]
                 if not due.empty:
                     for _, row in due.iterrows():
                         st.error(f"**{row['Kreditur']}** | Rp {row['Nominal']:,.0f} ({row['Tipe']}) | {row['Jatuh_Tempo'].strftime('%d-%m-%Y')}")
-                else: st.success("Aman.")
+                else: st.success("Jadwal aman.")
         with c_l2:
-            st.markdown("**📉 Eksposur Kreditur Terbesar**")
+            st.markdown("**📉 Prioritas Likuiditas**")
             with st.container(height=180):
                 top_k = df_l.groupby('Kreditur')['Nominal'].sum().idxmax()
-                st.warning(f"Prioritas Pembayaran: **{top_k}**")
+                st.warning(f"Kreditur Terbesar: **{top_k}**")
 
         st.divider()
         l1, l2, l3 = st.columns(3)
@@ -176,8 +177,7 @@ with tab2:
         l2.metric("Beban Bunga (B)", f"Rp {bunga_out/1e9:.2f} B")
         l3.metric("Pelunasan Pokok (B)", f"Rp {(total_out-bunga_out)/1e9:.2f} B")
 
-        # Chart
-        fig_l = px.bar(df_l, x='Kreditur', y=df_l['Nominal']/1e9, color='Tipe', barmode='stack', title="Kewajiban per Kreditur (Rp Billion)", text_auto='.2f')
+        fig_l = px.bar(df_l, x='Kreditur', y=df_l['Nominal']/1e9, color='Tipe', barmode='stack', title="Kewajiban per Bank (Rp Billion)", text_auto='.2f')
         fig_l.update_traces(texttemplate='%{y:.2f} B', textposition='outside')
         st.plotly_chart(fig_l, use_container_width=True)
 
@@ -193,4 +193,4 @@ with tab3:
     p1, p2, p3 = st.columns(3)
     p1.metric("Bunga Masuk (Asset)", f"Rp {inc_b:,.0f}")
     p2.metric("Bunga Keluar (Liability)", f"Rp {exp_b:,.0f}")
-    p3.metric("Net Position", f"Rp {net_pos:,.0f}", delta=f"{net_pos:,.0f}", delta_color="normal")
+    p3.metric("Net Interest Position", f"Rp {net_pos:,.0f}", delta=f"{net_pos:,.0f}", delta_color="normal")
