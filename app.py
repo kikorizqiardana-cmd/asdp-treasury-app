@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 # --- 1. KONFIGURASI HALAMAN ---
 st.set_page_config(page_title="ASDP ALM Command Center", layout="wide", page_icon="🚢")
 
-# --- 2. ENGINE PEMBERSIH DATA (ANTI-ERROR) ---
+# --- 2. ENGINE PEMBERSIH DATA ---
 def clean_numeric_robust(series):
     def process_val(val):
         val = str(val).strip().replace('Rp', '').replace('%', '').replace(' ', '').replace(',', '')
@@ -26,154 +26,178 @@ def load_gsheets_data():
         df_l = pd.read_csv(base_url + "Lending")
         df_f.columns = [c.strip() for c in df_f.columns]
         df_l.columns = [c.strip() for c in df_l.columns]
-        
-        # Penyelarasan Nama Kolom
         if 'Rate (%)' in df_f.columns: df_f.rename(columns={'Rate (%)': 'Rate'}, inplace=True)
         if 'Bank' in df_l.columns: df_l.rename(columns={'Bank': 'Kreditur'}, inplace=True)
-        
-        # Cleaning Angka
         for c in ['Nominal', 'Rate']:
             if c in df_f.columns: df_f[c] = clean_numeric_robust(df_f[c])
-        
-        cols_lending = ['Nominal', 'Cost_of_Fund (%)', 'Lending_Rate (%)']
-        for c in cols_lending:
+        cols_l = ['Nominal', 'Cost_of_Fund (%)', 'Lending_Rate (%)']
+        for c in cols_l:
             if c in df_l.columns: df_l[c] = clean_numeric_robust(df_l[c])
-            
-        if 'Jatuh_Tempo' in df_f.columns:
-            df_f['Jatuh_Tempo'] = pd.to_datetime(df_f['Jatuh_Tempo'], dayfirst=True, errors='coerce')
-        if 'Jatuh_Tempo' in df_l.columns:
-            df_l['Jatuh_Tempo'] = pd.to_datetime(df_l['Jatuh_Tempo'], dayfirst=True, errors='coerce')
-            
+        for df in [df_f, df_l]:
+            if 'Jatuh_Tempo' in df.columns: df['Jatuh_Tempo'] = pd.to_datetime(df['Jatuh_Tempo'], dayfirst=True, errors='coerce')
         return df_f, df_l, None
     except Exception as e: return pd.DataFrame(), pd.DataFrame(), str(e)
 
 def get_live_sbn():
     try:
         data = yf.Ticker("ID10Y=F").history(period="1d")
-        if not data.empty: return round(float(data['Close'].iloc[-1]), 2), "Yahoo Finance (Live)"
+        if not data.empty: return round(float(data['Close'].iloc[-1]), 2), "Yahoo Finance"
     except: pass
-    return 6.65, "Default (Manual)"
+    return 6.65, "Default"
 
-# --- 3. SIDEBAR (LOGO & MARKET) ---
+# --- 3. SIDEBAR (MARKET PULSE: BAREKSA & CRIEC) ---
 logo_path = "ferry.png"
 if os.path.exists(logo_path): st.sidebar.image(logo_path, use_container_width=True)
 st.sidebar.markdown("---")
 
 df_f_raw, df_l_raw, err = load_gsheets_data()
-if err: 
-    st.sidebar.error(f"API Error: {err}")
-    st.stop()
-else:
-    all_months = sorted(list(set(df_f_raw['Periode'].unique()) | set(df_l_raw['Periode'].unique())), reverse=True)
-    sel_month = st.sidebar.selectbox("Pilih Periode Analisis:", all_months)
-    df_f = df_f_raw[df_f_raw['Periode'] == sel_month].copy()
-    df_l = df_l_raw[df_l_raw['Periode'] == sel_month].copy()
+if err: st.stop()
+all_months = sorted(list(set(df_f_raw['Periode'].unique()) | set(df_l_raw['Periode'].unique())), reverse=True)
+sel_month = st.sidebar.selectbox("Pilih Periode Analisis:", all_months)
+df_f = df_f_raw[df_f_raw['Periode'] == sel_month].copy()
+df_l = df_l_raw[df_l_raw['Periode'] == sel_month].copy()
 
+# Market Intelligence Sidebar
 st.sidebar.header("⚙️ Market Intelligence")
-sbn_val, sbn_source = get_live_sbn()
-current_sbn = st.sidebar.number_input(f"Benchmark SBN 10Y ({sbn_source})", value=sbn_val, step=0.01)
+sbn_v, sbn_s = get_live_sbn()
+current_sbn = st.sidebar.number_input(f"SBN 10Y ({sbn_s})", value=sbn_v, step=0.01)
+
+st.sidebar.markdown("---")
+st.sidebar.header("📊 Market Benchmarks")
+bareksa_val = st.sidebar.number_input("Bareksa (Money Market %)", value=4.75, step=0.01)
+criec_val = st.sidebar.number_input("CRIEC (Corporate Bond Index %)", value=7.20, step=0.01)
+
+# Bond Simulator
+rating = st.sidebar.selectbox("Rating Reinvestasi:", ["AAA", "AA+", "AA", "A", "BBB"])
+spread_map = {"AAA": 80, "AA+": 110, "AA": 140, "A": 260, "BBB": 480}
+target_bond_net = (current_sbn + (spread_map[rating]/100)) * 0.9
 
 # --- 4. DASHBOARD UI ---
 st.title(f"🚢 ASDP Treasury & ALM Command Center")
 tab1, tab2, tab3 = st.tabs(["💰 Modul 1: Funding", "📈 Modul 2: Lending", "📊 Modul 3: ALM Resume"])
 
 # ==========================================
-# TAB 1 & 2 (PERSTABLISHED BY KIKO)
+# TAB 1: FUNDING (LAYOUT WHATSAPP)
 # ==========================================
-# [Kode Tab 1 & Tab 2 tetap dipertahankan sesuai desain sebelumnya agar tidak berubah]
 with tab1:
     if not df_f.empty:
         df_f['Net_Yield'] = df_f['Rate'] * 0.8
         df_f['Pendapatan_Riil'] = (df_f['Nominal'] * (df_f['Rate'] / 100)) / 12
         net_sbn = current_sbn * 0.9
+        total_rev = df_f['Pendapatan_Riil'].sum()
+
+        # Baris 1: Metrics Utama
         m1, m2, m3 = st.columns(3)
         m1.metric("Total Placement", f"Rp {df_f['Nominal'].sum():,.0f}")
-        m2.metric(f"Total Revenue ({sel_month})", f"Rp {df_f['Pendapatan_Riil'].sum():,.0f}")
+        m2.metric(f"Total Revenue ({sel_month})", f"Rp {total_rev:,.0f}")
         m3.metric("SBN Net Benchmark", f"{net_sbn:.2f}%")
+
+        # Baris 2: Opportunity Gain
+        p1, p2, p3 = st.columns(3)
+        pot_sbn = (df_f['Nominal'] * (net_sbn/100) / 12).sum() - total_rev
+        pot_bond = (df_f['Nominal'] * (target_bond_net/100) / 12).sum() - total_rev
+        p1.metric("Potensi Tambahan (SBN)", f"Rp {pot_sbn:,.0f}")
+        p2.metric(f"Potensi Tambahan ({rating})", f"Rp {pot_bond:,.0f}")
+        p3.metric(f"Target Yield {rating} (Net)", f"{target_bond_net:.2f}%")
+
         st.divider()
+
+        # Baris 3: Alerts Side by Side
+        c_al1, c_al2 = st.columns(2)
+        with c_al1:
+            st.subheader("🚩 Spread Alert (vs SBN)")
+            with st.container(height=180):
+                df_loss = df_f[df_f['Net_Yield'] < net_sbn]
+                if not df_loss.empty:
+                    for _, row in df_loss.iterrows(): st.error(f"**{row['Bank']}** | Yield: `{row['Net_Yield']:.2f}%`")
+                else: st.success("Optimal.")
+        with c_al2:
+            st.subheader("⏳ Maturity Watch (H-14)")
+            with st.container(height=180):
+                today = datetime.now()
+                df_soon = df_f[(df_f['Jatuh_Tempo'] >= today) & (df_f['Jatuh_Tempo'] <= today + timedelta(days=14))]
+                if not df_soon.empty:
+                    for _, row in df_soon.iterrows(): st.warning(f"**{row['Bank']}** | `{row['Jatuh_Tempo'].strftime('%d-%m-%Y')}`")
+                else: st.info("Tidak ada jatuh tempo dekat.")
+
+        st.divider()
+
+        # Baris 4: Charts
         v1, v2 = st.columns([1.2, 1])
-        with v1: st.plotly_chart(px.bar(df_f.groupby('Bank')['Pendapatan_Riil'].sum().reset_index(), x='Bank', y='Pendapatan_Riil', title="Revenue per Bank", text_auto=',.0f'), use_container_width=True)
+        with v1: st.plotly_chart(px.bar(df_f.groupby('Bank')['Pendapatan_Riil'].sum().reset_index(), x='Bank', y='Pendapatan_Riil', title="Revenue per Bank", text_auto=',.0f', color='Bank'), use_container_width=True)
         with v2: st.plotly_chart(px.pie(df_f, values='Net_Yield', names='Bank', hole=0.5, title="Net Yield Mix"), use_container_width=True)
 
+# ==========================================
+# TAB 2: LENDING (CASH OUT DEBT)
+# ==========================================
 with tab2:
     if not df_l.empty:
-        total_debt = df_l['Nominal'].sum()
+        total_cash_out = df_l['Nominal'].sum()
         l1, l2, l3 = st.columns(3)
-        l1.metric("Total Outstanding Debt", f"Rp {total_debt:,.0f}")
-        l2.metric("Avg. CoF", f"{df_l['Cost_of_Fund (%)'].mean():.2f}%" if 'Cost_of_Fund (%)' in df_l.columns else "N/A")
-        l3.metric("Kreditur Terbesar", df_l.groupby('Kreditur')['Nominal'].sum().idxmax() if 'Kreditur' in df_l.columns else "N/A")
+        l1.metric("Total Cash Out Debt", f"Rp {total_cash_out:,.0f}")
+        l2.metric("Avg. CoF (Market)", f"{df_l['Cost_of_Fund (%)'].mean():.2f}%" if 'Cost_of_Fund (%)' in df_l.columns else "N/A")
+        l3.metric("Bank Kreditur Utama", df_l.groupby('Kreditur')['Nominal'].sum().idxmax())
+
         st.divider()
-        if 'Kreditur' in df_l.columns: st.plotly_chart(px.bar(df_l.groupby('Kreditur')['Nominal'].sum().reset_index().sort_values('Nominal', ascending=False), x='Kreditur', y='Nominal', text_auto=',.0f', color='Kreditur', title="Debt per Bank"), use_container_width=True)
+
+        # RESTORE ALERT LENDING
+        st.subheader("🚨 Payment Maturity Alert (H-14)")
+        with st.container(height=180):
+            today = datetime.now()
+            df_pay = df_l[(df_l['Jatuh_Tempo'] >= today) & (df_l['Jatuh_Tempo'] <= today + timedelta(days=14))]
+            if not df_pay.empty:
+                for _, row in df_pay.iterrows(): st.error(f"**{row['Kreditur']}** | Rp {row['Nominal']:,.0f} | `{row['Jatuh_Tempo'].strftime('%d-%m-%Y')}`")
+            else: st.success("Jadwal pembayaran aman.")
+
+        st.subheader("📊 Eksposisi Cash Out Debt per Bank")
+        df_kred = df_l.groupby('Kreditur')['Nominal'].sum().reset_index().sort_values('Nominal', ascending=False)
+        st.plotly_chart(px.bar(df_kred, x='Kreditur', y='Nominal', text_auto=',.0f', color='Kreditur', title="Cash Out per Bank Kreditur"), use_container_width=True)
 
 # ==========================================
-# TAB 3: MODUL 3 - ALM RESUME (REVENUE & ICR)
+# TAB 3: ALM RESUME (ANALYSIS & RISK)
 # ==========================================
 with tab3:
-    st.header(f"📊 Financial Health & ALM Metrics - {sel_month}")
-    
+    st.header(f"📊 ALM Strategic & Risk Assessment - {sel_month}")
     if not df_f.empty and not df_l.empty:
-        # --- PERHITUNGAN REVENUE & BEBAN ---
-        # 1. Inflow: Pendapatan Bunga Deposito (Funding)
-        inflow_bunga = df_f['Pendapatan_Riil'].sum()
-        
-        # 2. Outflow: Beban Bunga Bank (Lending - menggunakan Cost of Fund)
-        if 'Cost_of_Fund (%)' in df_l.columns:
-            outflow_bunga = (df_l['Nominal'] * (df_l['Cost_of_Fund (%)'] / 100) / 12).sum()
-        else:
-            outflow_bunga = 0
-            
-        # 3. Interest Coverage Ratio (ICR)
-        # ICR = Interest Income / Interest Expense
-        icr_ratio = inflow_bunga / outflow_bunga if outflow_bunga > 0 else 0
-        
-        # --- DISPLAY METRICS ---
+        inflow_b = df_f['Pendapatan_Riil'].sum()
+        # Perhitungan Cash Out Debt (Interest Expense)
+        outflow_b = (df_l['Nominal'] * (df_l['Cost_of_Fund (%)'] / 100) / 12).sum() if 'Cost_of_Fund (%)' in df_l.columns else 0
+        icr = inflow_b / outflow_b if outflow_b > 0 else 0
+
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Total Interest Revenue", f"Rp {inflow_bunga:,.0f}")
-        c2.metric("Total Interest Expense", f"Rp {outflow_bunga:,.0f}")
-        
-        # Net Interest Margin (Simple)
-        net_interest = inflow_bunga - outflow_bunga
-        c3.metric("Net Interest Position", f"Rp {net_interest:,.0f}", delta=f"{'Surplus' if net_interest > 0 else 'Defisit'}")
-        
-        # ICR Metric with Color Coding
-        icr_color = "normal" if icr_ratio >= 1.5 else "inverse"
-        c4.metric("Interest Coverage Ratio (ICR)", f"{icr_ratio:.2f}x", delta="Target: > 1.5x", delta_color=icr_color)
-        
+        c1.metric("Total Interest Revenue", f"Rp {inflow_b:,.0f}")
+        c2.metric("Total Cash Out Debt (Int)", f"Rp {outflow_b:,.0f}")
+        c3.metric("Net Interest Income", f"Rp {inflow_b - outflow_b:,.0f}")
+        c4.metric("ICR Ratio", f"{icr:.2f}x")
+
         st.divider()
         
-        # --- VISUALISASI MODUL 3 ---
-        col_v1, col_v2 = st.columns([1, 1])
+        # RISK ASSESSMENT & ANALYSIS
+        col_an1, col_an2 = st.columns(2)
+        with col_an1:
+            st.subheader("📝 ALM Analysis")
+            with st.container(border=True):
+                st.write(f"1. Posisi likuiditas ASDP pada {sel_month} berada dalam kondisi **{'Surplus' if icr > 1 else 'Defisit'}**.")
+                st.write(f"2. Yield Deposito rata-rata {df_f['Rate'].mean():.2f}% masih bersaing dengan **Bareksa ({bareksa_val}%)**.")
+                st.write(f"3. Terdapat gap sebesar **{criec_val - df_f['Net_Yield'].mean():.2f}%** jika dibandingkan dengan **CRIEC Index**.")
         
-        with col_v1:
-            st.subheader("💹 Inflow vs Outflow Cash")
-            fig_compare = go.Figure(data=[
-                go.Bar(name='Interest Income (Asset)', x=['Monthly bunga'], y=[inflow_bunga], marker_color='#2ecc71'),
-                go.Bar(name='Interest Expense (Liability)', x=['Monthly bunga'], y=[outflow_bunga], marker_color='#e74c3c')
-            ])
-            fig_compare.update_layout(barmode='group', height=400)
-            st.plotly_chart(fig_compare, use_container_width=True)
-            
-        with col_v2:
-            st.subheader("🛡️ ICR Stability Gauge")
-            fig_gauge = go.Figure(go.Indicator(
-                mode = "gauge+number",
-                value = icr_ratio,
-                title = {'text': "Coverage Strength"},
-                gauge = {
-                    'axis': {'range': [0, 5]},
-                    'bar': {'color': "darkblue"},
-                    'steps' : [
-                        {'range': [0, 1], 'color': "#ff4d4d"},
-                        {'range': [1, 1.5], 'color': "#ffa64d"},
-                        {'range': [1.5, 5], 'color': "#33cc33"}],
-                    'threshold' : {'line': {'color': "black", 'width': 4}, 'thickness': 0.75, 'value': 1.5}
-                }
-            ))
-            fig_gauge.update_layout(height=400)
-            st.plotly_chart(fig_gauge, use_container_width=True)
+        with col_an2:
+            st.subheader("🛡️ Risk Assessment")
+            with st.container(border=True):
+                if icr < 1.5: st.error("🚨 **HIGH RISK**: Interest Coverage Ratio di bawah 1.5x. Pendapatan bunga mepet untuk bayar beban bank.")
+                elif icr < 2.5: st.warning("⚠️ **MODERATE RISK**: Posisi aman, namun sensitif terhadap kenaikan suku bunga market.")
+                else: st.success("🛡️ **LOW RISK**: Kapasitas pembayaran bunga sangat kuat (ICR > 2.5x).")
+                
+                # Check Maturity Gap
+                if len(df_l[df_l['Jatuh_Tempo'] <= today + timedelta(days=30)]) > 0:
+                    st.error("🚨 **Liquidity Risk**: Ada pinjaman besar jatuh tempo dalam < 30 hari.")
 
-        # Formula Note
-        st.info(f"**Analisis ICR:** Saat ini ICR ASDP berada di angka **{icr_ratio:.2f}x**. Artinya, setiap Rp 1 beban bunga bank di-cover oleh Rp {icr_ratio:.2f} pendapatan dari deposito.")
-
-    else:
-        st.warning("Data tidak lengkap untuk menghitung modul ALM.")
+        st.divider()
+        
+        # Visual perbandingan
+        fig_alm = go.Figure(data=[
+            go.Bar(name='Interest Revenue (Funding)', x=['Flow Bulanan'], y=[inflow_b], marker_color='#2ecc71'),
+            go.Bar(name='Cash Out Debt (Lending)', x=['Flow Bulanan'], y=[outflow_b], marker_color='#e74c3c')
+        ])
+        fig_alm.update_layout(title="Asset Revenue vs Liability Cash Out", barmode='group')
+        st.plotly_chart(fig_alm, use_container_width=True)
