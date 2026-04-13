@@ -27,7 +27,7 @@ if 'initialized' not in st.session_state:
 if not st.session_state.initialized:
     with st.container():
         st.markdown("<br><br>", unsafe_allow_html=True)
-        if lottie_ship: st_lottie(lottie_ship, height=300, key="asdp_v6_splash")
+        if lottie_ship: st_lottie(lottie_ship, height=300, key="asdp_v61_splash")
         st.markdown("<h2 style='text-align: center; color: #004d99;'>Menyiapkan Dashboard Executive ASDP...</h2>", unsafe_allow_html=True)
         bar = st.progress(0)
         for i in range(100):
@@ -65,28 +65,35 @@ def load_data():
         
         if 'Debitur' in df_l.columns: df_l.rename(columns={'Debitur': 'Kreditur'}, inplace=True)
         
-        for df in [df_f, df_l]:
-            for col in ['Nominal', 'Rate (%)', 'CoF (%)']:
-                if col in df.columns: df[col] = clean_numeric_robust(df[col])
-            if 'Periode' in df.columns: df['Periode'] = df['Periode'].astype(str).str.strip()
-            if 'Jatuh_Tempo' in df.columns:
-                df['Jatuh_Tempo'] = pd.to_datetime(df['Jatuh_Tempo'], dayfirst=True, errors='coerce')
+        # Proses DataFrame satu per satu agar aman
+        for col in ['Nominal', 'Rate (%)', 'CoF (%)']:
+            if col in df_f.columns: df_f[col] = clean_numeric_robust(df_f[col])
+            if col in df_l.columns: df_l[col] = clean_numeric_robust(df_l[col])
+            
+        if 'Periode' in df_f.columns: df_f['Periode'] = df_f['Periode'].astype(str).str.strip()
+        if 'Periode' in df_l.columns: df_l['Periode'] = df_l['Periode'].astype(str).str.strip()
+        
+        if 'Jatuh_Tempo' in df_f.columns:
+            df_f['Jatuh_Tempo'] = pd.to_datetime(df_f['Jatuh_Tempo'], dayfirst=True, errors='coerce')
+        if 'Jatuh_Tempo' in df_l.columns:
+            df_l['Jatuh_Tempo'] = pd.to_datetime(df_l['Jatuh_Tempo'], dayfirst=True, errors='coerce')
+            
         return df_f, df_l, None
     except Exception as e: return pd.DataFrame(), pd.DataFrame(), str(e)
 
 df_f_raw, df_l_raw, error_msg = load_data()
 
-# --- 4. SIDEBAR (RESTORING ASDP IDENTITY) ---
+# --- 4. SIDEBAR (LOGO ASDP ONLINE) ---
 st.sidebar.markdown("<br>", unsafe_allow_html=True)
-
-# Memastikan logo & identitas muncul
-st.sidebar.markdown("<h2 style='text-align: center; color: #004d99; margin-bottom: 0px;'>PT ASDP</h2>", unsafe_allow_html=True)
-st.sidebar.markdown("<p style='text-align: center; font-weight: bold; color: #004d99;'>Indonesia Ferry (Persero)</p>", unsafe_allow_html=True)
-
-# Link logo alternatif yang lebih stabil
-st.sidebar.image("https://upload.wikimedia.org/wikipedia/id/thumb/4/41/Logo_ASDP_Indonesia_Ferry.svg/1280px-Logo_ASDP_Indonesia_Ferry.svg.png", use_container_width=True)
-
+# Menggunakan logo langsung dari website resmi ASDP
+st.sidebar.image("https://www.indonesiaferry.co.id/img/logo.png", use_container_width=True)
+st.sidebar.markdown("<h3 style='text-align: center; color: #004d99; margin-top: -10px;'>Indonesia Ferry (Persero)</h3>", unsafe_allow_html=True)
 st.sidebar.markdown("---")
+
+if error_msg:
+    st.sidebar.error(f"Gagal memuat data: {error_msg}")
+    st.stop()
+
 all_periods = sorted(list(set(df_f_raw['Periode'].unique()) | set(df_l_raw['Periode'].unique())), reverse=True)
 selected_month = st.sidebar.selectbox("Pilih Periode Analisis:", all_periods, index=0)
 
@@ -132,7 +139,11 @@ with tab1:
                 today = datetime.now()
                 soon = df_f[(df_f['Jatuh_Tempo'] >= today) & (df_f['Jatuh_Tempo'] <= today + timedelta(days=7))]
                 if not soon.empty:
-                    for _, row in soon.iterrows(): st.warning(f"**{row['Bank']}** | {row['Jatuh_Tempo'].strftime('%d-%m-%Y')}")
+                    for _, row in soon.iterrows():
+                        try:
+                            tgl = row['Jatuh_Tempo'].strftime('%d-%m-%Y')
+                        except: tgl = "Segera"
+                        st.warning(f"**{row['Bank']}** | {tgl}")
                 else: st.info("Tidak ada jatuh tempo dekat.")
 
         st.divider()
@@ -149,7 +160,8 @@ with tab1:
         with st.expander("Detail Tabel Data Funding", expanded=True):
             df_disp = df_f.copy()
             if 'Jatuh_Tempo' in df_disp.columns:
-                df_disp['Jatuh_Tempo'] = df_display = df_disp['Jatuh_Tempo'].dt.strftime('%d-%m-%Y')
+                # FIX ERROR: Diubah jadi SUPER AMAN!
+                df_disp['Jatuh_Tempo'] = pd.to_datetime(df_disp['Jatuh_Tempo'], errors='coerce').dt.strftime('%d-%m-%Y')
             st.dataframe(df_disp, use_container_width=True)
 
 # TAB 2: LOAN PAYMENT
@@ -168,7 +180,10 @@ with tab2:
                 due = df_l[(df_l['Jatuh_Tempo'] >= today) & (df_l['Jatuh_Tempo'] <= today + timedelta(days=7))]
                 if not due.empty:
                     for _, row in due.iterrows():
-                        st.error(f"**{row['Kreditur']}** | Rp {row['Nominal']:,.0f} ({row['Tipe']}) | {row['Jatuh_Tempo'].strftime('%d-%m-%Y')}")
+                        try:
+                            tgl = row['Jatuh_Tempo'].strftime('%d-%m-%Y')
+                        except: tgl = "Segera"
+                        st.error(f"**{row['Kreditur']}** | Rp {row['Nominal']:,.0f} ({row['Tipe']}) | {tgl}")
                 else: st.success("Jadwal aman.")
         with c_l2:
             st.markdown("**📉 Prioritas Pembayaran**")
@@ -185,6 +200,12 @@ with tab2:
         fig_l = px.bar(df_l, x='Kreditur', y=df_l['Nominal']/1e9, color='Tipe', barmode='stack', title="Kewajiban per Bank (Rp Billion)", text_auto='.2f')
         fig_l.update_traces(texttemplate='%{y:.2f} B', textposition='outside')
         st.plotly_chart(fig_l, use_container_width=True)
+        
+        with st.expander("Detail Tabel Kewajiban", expanded=False):
+            df_l_disp = df_l.copy()
+            if 'Jatuh_Tempo' in df_l_disp.columns:
+                df_l_disp['Jatuh_Tempo'] = pd.to_datetime(df_l_disp['Jatuh_Tempo'], errors='coerce').dt.strftime('%d-%m-%Y')
+            st.dataframe(df_l_disp, use_container_width=True)
 
 # TAB 3: ALM
 with tab3:
