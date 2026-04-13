@@ -7,7 +7,7 @@ import os
 from datetime import datetime, timedelta
 
 # --- 1. CONFIG HALAMAN ---
-st.set_page_config(page_title="ASDP Revenue Performance", layout="wide", page_icon="🚢")
+st.set_page_config(page_title="ASDP Strategic Treasury", layout="wide", page_icon="🚢")
 
 # --- 2. DATA ENGINE ---
 def clean_numeric_robust(series):
@@ -67,36 +67,54 @@ else:
 
 st.sidebar.header("⚙️ Market Intelligence")
 sbn_val, sbn_source = get_live_sbn()
-current_sbn = st.sidebar.number_input(f"SBN 10Y Benchmark ({sbn_source})", value=sbn_val, step=0.01)
+current_sbn = st.sidebar.number_input(f"Benchmark SBN 10Y ({sbn_source})", value=sbn_val, step=0.01)
 
 st.sidebar.markdown("---")
 st.sidebar.header("🏢 Bond/Sukuk Simulator")
-rating = st.sidebar.selectbox("Rating Reinvestasi:", ["AAA", "AA+", "AA", "A", "BBB"])
+rating = st.sidebar.selectbox("Pilih Rating Target:", ["AAA", "AA+", "AA", "A", "BBB"])
 spread_map = {"AAA": 80, "AA+": 110, "AA": 140, "A": 260, "BBB": 480}
 sel_spread = st.sidebar.slider(f"Spread {rating} (bps)", 0, 600, spread_map[rating])
 target_bond_gross = current_sbn + (sel_spread / 100)
-net_bond = target_bond_gross * 0.9
 
 # --- 4. DASHBOARD UI ---
 st.title(f"🚢 ASDP Treasury Strategic Dashboard")
-tab1, tab2 = st.tabs(["💰 Revenue & Yield Analysis", "📈 Lending Monitor"])
+tab1, tab2 = st.tabs(["💰 Performance & Projections", "📈 Lending Monitor"])
 
 with tab1:
     if not df_f.empty:
-        # Perhitungan Pajak & Revenue
+        # Kalkulasi Dasar
         df_f['Net_Yield'] = df_f['Rate'] * 0.8
-        net_sbn = current_sbn * 0.9
         df_f['Pendapatan_Riil'] = (df_f['Nominal'] * (df_f['Rate'] / 100)) / 12
         
-        # 1. METRICS
+        # Benchmark Net (Pajak SBN/Obligasi 10%)
+        net_sbn = current_sbn * 0.9
+        net_bond = target_bond_gross * 0.9
+        
+        # Kalkulasi Potensi Revenue Tambahan
+        total_rev_current = df_f['Pendapatan_Riil'].sum()
+        total_rev_sbn = (df_f['Nominal'] * (net_sbn / 100) / 12).sum()
+        total_rev_bond = (df_f['Nominal'] * (net_bond / 100) / 12).sum()
+        
+        diff_sbn = total_rev_sbn - total_rev_current
+        diff_bond = total_rev_bond - total_rev_current
+        
+        # 1. METRICS BARIS 1 (KONDISI SAAT INI)
         m1, m2, m3 = st.columns(3)
         m1.metric("Total Placement", f"Rp {df_f['Nominal'].sum():,.0f}")
-        m2.metric(f"Total Revenue ({sel_month})", f"Rp {df_f['Pendapatan_Riil'].sum():,.0f}")
-        m3.metric(f"Market Benchmark (SBN Net)", f"{net_sbn:.2f}%")
+        m2.metric(f"Total Revenue ({sel_month})", f"Rp {total_rev_current:,.0f}")
+        m3.metric("SBN Net Benchmark", f"{net_sbn:.2f}%")
+
+        # 2. METRICS BARIS 2 (PROYEKSI TAMBAHAN / OPPORTUNITY GAIN)
+        p1, p2, p3 = st.columns(3)
+        p1.metric("Potensi Tambahan Revenue (SBN)", f"Rp {diff_sbn:,.0f}", 
+                  delta=f"{((total_rev_sbn/total_rev_current)-1)*100:.1f}% Increase", delta_color="normal")
+        p2.metric(f"Potensi Tambahan Revenue ({rating})", f"Rp {diff_bond:,.0f}", 
+                  delta=f"{((total_rev_bond/total_rev_current)-1)*100:.1f}% Increase", delta_color="normal")
+        p3.metric(f"Target Yield {rating} (Net)", f"{net_bond:.2f}%")
 
         st.divider()
 
-        # 2. ALERTS (SCROLLABLE)
+        # 3. ALERTS (SCROLLABLE)
         col_a1, col_a2 = st.columns(2)
         with col_a1:
             st.subheader("🚩 Spread Alert (vs SBN)")
@@ -105,7 +123,7 @@ with tab1:
                 if not df_loss.empty:
                     for _, row in df_loss.iterrows():
                         st.error(f"**{row['Bank']}** | Yield: `{row['Net_Yield']:.2f}%` | Rev: `Rp {row['Pendapatan_Riil']:,.0f}`")
-                else: st.success("Seluruh yield bilyet optimal.")
+                else: st.success("Seluruh penempatan optimal.")
 
         with col_a2:
             st.subheader("⏳ Maturity Watch (H-14)")
@@ -119,46 +137,44 @@ with tab1:
 
         st.divider()
 
-        # 3. PERFORMANCE CHARTS (THE SWAP)
-        st.subheader("📊 Revenue Analytics & Strategic Benchmarking")
+        # 4. PERFORMANCE CHARTS
+        st.subheader("📊 Strategic Revenue & Yield Analytics")
         v1, v2 = st.columns([1, 1])
         
-        # Data Agregat per Bank
         df_bank_perf = df_f.groupby('Bank').agg({
             'Pendapatan_Riil': 'sum',
             'Net_Yield': 'mean'
         }).reset_index().sort_values('Pendapatan_Riil', ascending=False)
 
         with v1:
-            # Grafik 1: BAR CHART REVENUE (RUPIAH) - SEKARANG JADI BAR
+            # BAR CHART REVENUE (RUPIAH)
             fig_rev = px.bar(
                 df_bank_perf, 
                 x='Bank', 
                 y='Pendapatan_Riil',
-                title=f"Total Pendapatan Bunga per Bank (IDR)",
+                title=f"Total Revenue per Bank (IDR)",
                 text_auto=',.0f',
                 color='Bank',
-                color_discrete_sequence=px.colors.qualitative.Prism
+                color_discrete_sequence=px.colors.qualitative.Bold
             )
             fig_rev.update_traces(textposition='outside')
-            fig_rev.update_layout(showlegend=False, yaxis_title="Rupiah (Revenue)")
             st.plotly_chart(fig_rev, use_container_width=True)
             
         with v2:
-            # Grafik 2: PIE CHART YIELD (%) - SEKARANG JADI PIE
+            # PIE CHART YIELD (%)
             fig_yield_pie = px.pie(
                 df_bank_perf, 
                 values='Net_Yield', 
                 names='Bank',
-                title="Distribusi Net Yield per Bank (%)",
+                title="Komposisi Net Yield per Bank",
                 hole=0.4,
                 color_discrete_sequence=px.colors.qualitative.Safe
             )
             fig_yield_pie.update_traces(textposition='inside', textinfo='percent+label')
             st.plotly_chart(fig_yield_pie, use_container_width=True)
 
-        # 4. TABEL DETAIL
-        with st.expander("📑 Detail Inventori & Spread Analysis"):
+        # 5. TABEL DETAIL
+        with st.expander("📑 Detail Inventori & Full Data Analysis"):
             df_disp = df_f.copy()
             df_disp['Jatuh_Tempo'] = df_disp['Jatuh_Tempo'].apply(lambda x: x.strftime('%d-%m-%Y') if pd.notnull(x) else '-')
             st.dataframe(df_disp.style.format({
