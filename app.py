@@ -14,7 +14,7 @@ st.set_page_config(page_title="ASDP Treasury Command Center", layout="wide", pag
 # --- LOTTIE ANIMATION ---
 def load_lottieurl(url):
     try:
-        r = requests.get(url, timeout=10)
+        r = requests.get(url, timeout=5)
         return r.json() if r.status_code == 200 else None
     except: return None
 
@@ -27,7 +27,7 @@ if 'initialized' not in st.session_state:
 if not st.session_state.initialized:
     with st.container():
         st.markdown("<br><br>", unsafe_allow_html=True)
-        if lottie_ship: st_lottie(lottie_ship, height=300, key="asdp_v61_splash")
+        if lottie_ship: st_lottie(lottie_ship, height=300, key="asdp_v62_splash")
         st.markdown("<h2 style='text-align: center; color: #004d99;'>Menyiapkan Dashboard Executive ASDP...</h2>", unsafe_allow_html=True)
         bar = st.progress(0)
         for i in range(100):
@@ -53,7 +53,8 @@ def clean_numeric_robust(series):
         return val
     return pd.to_numeric(series.apply(process_val), errors='coerce').fillna(0)
 
-@st.cache_data(ttl=60)
+# TTL diubah jadi 1 detik agar tidak nyangkut data lama
+@st.cache_data(ttl=1)
 def load_data():
     sheet_id = "182zKZj0Kr56yqOGM_XW2W3Q6fhaOSo8z9TIbjC_JxxY"
     base_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet="
@@ -65,27 +66,19 @@ def load_data():
         
         if 'Debitur' in df_l.columns: df_l.rename(columns={'Debitur': 'Kreditur'}, inplace=True)
         
-        # Proses DataFrame satu per satu agar aman
-        for col in ['Nominal', 'Rate (%)', 'CoF (%)']:
-            if col in df_f.columns: df_f[col] = clean_numeric_robust(df_f[col])
-            if col in df_l.columns: df_l[col] = clean_numeric_robust(df_l[col])
-            
-        if 'Periode' in df_f.columns: df_f['Periode'] = df_f['Periode'].astype(str).str.strip()
-        if 'Periode' in df_l.columns: df_l['Periode'] = df_l['Periode'].astype(str).str.strip()
-        
-        if 'Jatuh_Tempo' in df_f.columns:
-            df_f['Jatuh_Tempo'] = pd.to_datetime(df_f['Jatuh_Tempo'], dayfirst=True, errors='coerce')
-        if 'Jatuh_Tempo' in df_l.columns:
-            df_l['Jatuh_Tempo'] = pd.to_datetime(df_l['Jatuh_Tempo'], dayfirst=True, errors='coerce')
-            
+        for df in [df_f, df_l]:
+            for col in ['Nominal', 'Rate (%)', 'CoF (%)']:
+                if col in df.columns: df[col] = clean_numeric_robust(df[col])
+            if 'Periode' in df.columns: df['Periode'] = df['Periode'].astype(str).str.strip()
+            if 'Jatuh_Tempo' in df.columns:
+                df['Jatuh_Tempo'] = pd.to_datetime(df['Jatuh_Tempo'], dayfirst=True, errors='coerce')
         return df_f, df_l, None
     except Exception as e: return pd.DataFrame(), pd.DataFrame(), str(e)
 
 df_f_raw, df_l_raw, error_msg = load_data()
 
-# --- 4. SIDEBAR (LOGO ASDP ONLINE) ---
+# --- 4. SIDEBAR ---
 st.sidebar.markdown("<br>", unsafe_allow_html=True)
-# Menggunakan logo langsung dari website resmi ASDP
 st.sidebar.image("https://www.indonesiaferry.co.id/img/logo.png", use_container_width=True)
 st.sidebar.markdown("<h3 style='text-align: center; color: #004d99; margin-top: -10px;'>Indonesia Ferry (Persero)</h3>", unsafe_allow_html=True)
 st.sidebar.markdown("---")
@@ -137,12 +130,13 @@ with tab1:
             st.markdown("**⏳ Jatuh Tempo (H-7)**")
             with st.container(height=180):
                 today = datetime.now()
-                soon = df_f[(df_f['Jatuh_Tempo'] >= today) & (df_f['Jatuh_Tempo'] <= today + timedelta(days=7))]
+                # FIX SUPER AMAN: Paksa baca sebagai Datetime di sini juga
+                df_f['Jatuh_Tempo_Safe'] = pd.to_datetime(df_f['Jatuh_Tempo'], errors='coerce')
+                soon = df_f[(df_f['Jatuh_Tempo_Safe'] >= today) & (df_f['Jatuh_Tempo_Safe'] <= today + timedelta(days=7))]
+                
                 if not soon.empty:
                     for _, row in soon.iterrows():
-                        try:
-                            tgl = row['Jatuh_Tempo'].strftime('%d-%m-%Y')
-                        except: tgl = "Segera"
+                        tgl = row['Jatuh_Tempo_Safe'].strftime('%d-%m-%Y')
                         st.warning(f"**{row['Bank']}** | {tgl}")
                 else: st.info("Tidak ada jatuh tempo dekat.")
 
@@ -160,8 +154,11 @@ with tab1:
         with st.expander("Detail Tabel Data Funding", expanded=True):
             df_disp = df_f.copy()
             if 'Jatuh_Tempo' in df_disp.columns:
-                # FIX ERROR: Diubah jadi SUPER AMAN!
-                df_disp['Jatuh_Tempo'] = pd.to_datetime(df_disp['Jatuh_Tempo'], errors='coerce').dt.strftime('%d-%m-%Y')
+                # FIX SUPER AMAN: Konversi paksa, kalau kosong jadikan tanda strip (-)
+                df_disp['Jatuh_Tempo'] = pd.to_datetime(df_disp['Jatuh_Tempo'], errors='coerce').dt.strftime('%d-%m-%Y').fillna('-')
+            # Bersihkan kolom bantuan
+            if 'Jatuh_Tempo_Safe' in df_disp.columns:
+                df_disp = df_disp.drop(columns=['Jatuh_Tempo_Safe'])
             st.dataframe(df_disp, use_container_width=True)
 
 # TAB 2: LOAN PAYMENT
@@ -177,12 +174,12 @@ with tab2:
             st.markdown("**🚨 Jadwal Pembayaran H-7 (Siapkan Dana!)**")
             with st.container(height=180):
                 today = datetime.now()
-                due = df_l[(df_l['Jatuh_Tempo'] >= today) & (df_l['Jatuh_Tempo'] <= today + timedelta(days=7))]
+                df_l['Jatuh_Tempo_Safe'] = pd.to_datetime(df_l['Jatuh_Tempo'], errors='coerce')
+                due = df_l[(df_l['Jatuh_Tempo_Safe'] >= today) & (df_l['Jatuh_Tempo_Safe'] <= today + timedelta(days=7))]
+                
                 if not due.empty:
                     for _, row in due.iterrows():
-                        try:
-                            tgl = row['Jatuh_Tempo'].strftime('%d-%m-%Y')
-                        except: tgl = "Segera"
+                        tgl = row['Jatuh_Tempo_Safe'].strftime('%d-%m-%Y')
                         st.error(f"**{row['Kreditur']}** | Rp {row['Nominal']:,.0f} ({row['Tipe']}) | {tgl}")
                 else: st.success("Jadwal aman.")
         with c_l2:
@@ -204,7 +201,9 @@ with tab2:
         with st.expander("Detail Tabel Kewajiban", expanded=False):
             df_l_disp = df_l.copy()
             if 'Jatuh_Tempo' in df_l_disp.columns:
-                df_l_disp['Jatuh_Tempo'] = pd.to_datetime(df_l_disp['Jatuh_Tempo'], errors='coerce').dt.strftime('%d-%m-%Y')
+                df_l_disp['Jatuh_Tempo'] = pd.to_datetime(df_l_disp['Jatuh_Tempo'], errors='coerce').dt.strftime('%d-%m-%Y').fillna('-')
+            if 'Jatuh_Tempo_Safe' in df_l_disp.columns:
+                df_l_disp = df_l_disp.drop(columns=['Jatuh_Tempo_Safe'])
             st.dataframe(df_l_disp, use_container_width=True)
 
 # TAB 3: ALM
