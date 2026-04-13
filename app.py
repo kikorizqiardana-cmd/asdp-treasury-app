@@ -26,8 +26,8 @@ if 'initialized' not in st.session_state:
 if not st.session_state.initialized:
     with st.container():
         st.markdown("<br><br>", unsafe_allow_html=True)
-        if lottie_ship: st_lottie(lottie_ship, height=300, key="asdp_7day_alert")
-        st.markdown("<h2 style='text-align: center; color: #004d99;'>Menyiapkan Notifikasi Jatuh Tempo ASDP...</h2>", unsafe_allow_html=True)
+        if lottie_ship: st_lottie(lottie_ship, height=300, key="asdp_recon_edition")
+        st.markdown("<h2 style='text-align: center; color: #004d99;'>Mensinkronkan Yield & Inflow Bank ASDP...</h2>", unsafe_allow_html=True)
         bar = st.progress(0)
         for i in range(100):
             time.sleep(0.01)
@@ -93,88 +93,92 @@ df_l = df_l_raw[df_l_raw['Periode'] == selected_month].copy()
 st.title(f"🚢 ASDP Treasury Dashboard")
 tab1, tab2, tab3 = st.tabs(["💰 Funding Monitor", "📈 Lending Schedule", "📊 ALM & Market Intel"])
 
-# WS 1: FUNDING
+# ==========================================
+# WS 1: FUNDING MONITOR
+# ==========================================
 with tab1:
     st.header(f"Intelligence Funding - {selected_month}")
     
     if not df_f.empty:
+        # Kalkulasi Yield
         df_f['Net_Yield_Rate'] = df_f['Rate (%)'] * 0.8
         net_sbn = current_sbn * 0.9
+        # Rumus Bunga Bulanan: (Nominal * Rate) / 12
         df_f['Monthly_Yield'] = (df_f['Nominal'] * (df_f['Rate (%)'] / 100)) / 12
 
-        # --- NOTIFIKASI PINTAR (ALERTS) ---
-        st.subheader("🔔 Treasury Alerts (Real-Time)")
+        # --- NOTIFIKASI PINTAR ---
+        st.subheader("🔔 Treasury Alerts")
         col_a1, col_a2 = st.columns(2)
         
         with col_a1:
             st.markdown("**🚨 Underperform vs SBN Net**")
-            with st.container(height=200):
+            with st.container(height=180):
                 under = df_f[df_f['Net_Yield_Rate'] < net_sbn]
                 if not under.empty:
                     for _, row in under.iterrows():
-                        st.error(f"**{row['Bank']}** | Rate: {row['Rate (%)']}% (Gap: {net_sbn - row['Net_Yield_Rate']:.2f}%)")
-                else:
-                    st.success("✅ Semua rate aman di atas SBN Net.")
+                        st.error(f"**{row['Bank']}** | Gap: {net_sbn - row['Net_Yield_Rate']:.2f}%")
+                else: st.success("✅ Semua rate aman.")
 
         with col_a2:
             st.markdown("**⏳ Jatuh Tempo (H-7)**")
-            with st.container(height=200):
+            with st.container(height=180):
                 if 'Jatuh_Tempo' in df_f.columns:
                     today = datetime.now()
-                    # LOGIKA H-7: Cek bilyet yang jatuh tempo dalam 7 hari ke depan
                     seven_days_later = today + timedelta(days=7)
                     soon = df_f[(df_f['Jatuh_Tempo'] >= today) & (df_f['Jatuh_Tempo'] <= seven_days_later)]
-                    
                     if not soon.empty:
                         for _, row in soon.iterrows():
-                            dt_str = row['Jatuh_Tempo'].strftime('%d-%m-%Y')
-                            st.warning(f"**{row['Bank']}** | Jatuh Tempo: {dt_str}")
-                    else:
-                        st.info("📅 Tidak ada bilyet yang jatuh tempo dalam 7 hari ke depan.")
-                else:
-                    st.info("Kolom 'Jatuh_Tempo' tidak ditemukan.")
+                            st.warning(f"**{row['Bank']}** | {row['Jatuh_Tempo'].strftime('%d-%m-%Y')}")
+                    else: st.info("📅 Tidak ada jatuh tempo dekat.")
+                else: st.info("Kolom Jatuh_Tempo tidak ditemukan.")
 
         st.divider()
         
-        # --- METRICS & CHARTS ---
+        # --- METRICS ---
+        total_monthly_yield = df_f['Monthly_Yield'].sum()
         m1, m2, m3 = st.columns(3)
         m1.metric("Total Placement", f"Rp {df_f['Nominal'].sum():,.0f}")
-        m2.metric("Penerimaan Bunga Bulanan", f"Rp {df_f['Monthly_Yield'].sum():,.0f}")
+        m2.metric("Total Yield Bulanan", f"Rp {total_monthly_yield:,.0f}", help="Total bunga yang diterima dari semua bank")
         m3.metric("Benchmark SBN Net", f"{net_sbn:.2f}%")
+
+        # --- GRAFIK INFLOW PER BANK ---
+        st.markdown("### 📊 Rekonsiliasi Penerimaan Bunga per Bank")
+        
+        # Grouping data agar chart menampilkan total per Bank
+        df_bank_yield = df_f.groupby('Bank')['Monthly_Yield'].sum().reset_index()
+        
+        c1, c2 = st.columns([2, 1])
+        with c1:
+            # Grafik Bar Inflow Bunga per Bank
+            fig_bar = px.bar(df_bank_yield, 
+                             x='Bank', 
+                             y='Monthly_Yield', 
+                             color='Bank',
+                             text_auto='.2s',
+                             title=f"Total Penerimaan Bunga: Rp {total_monthly_yield:,.0f}")
+            fig_bar.update_layout(showlegend=False)
+            st.plotly_chart(fig_bar, use_container_width=True)
+            
+        with c2:
+            # Grafik Pie Konsentrasi Nominal (Bukan Bunga)
+            st.plotly_chart(px.pie(df_f, values='Nominal', names='Bank', hole=0.4, title="Konsentrasi Dana Bilyet"), use_container_width=True)
 
         with st.expander("Lihat Detail Tabel Funding"):
             df_display = df_f.copy()
             if 'Jatuh_Tempo' in df_display.columns:
                 df_display['Jatuh_Tempo'] = df_display['Jatuh_Tempo'].dt.strftime('%d-%m-%Y')
             st.dataframe(df_display, use_container_width=True)
-        
-        c1, c2 = st.columns(2)
-        with c1:
-            st.plotly_chart(px.bar(df_f, x='Bank', y='Monthly_Yield', title="Inflow Bunga per Bank", text_auto='.2s'), use_container_width=True)
-        with c2:
-            st.plotly_chart(px.pie(df_f, values='Nominal', names='Bank', hole=0.4, title="Komposisi Dana"), use_container_width=True)
 
+# ==========================================
 # WS 3: ALM
+# ==========================================
 with tab3:
     st.header("Strategic ALM & Market Intelligence")
     y_fund = df_f['Monthly_Yield'].sum() if not df_f.empty else 0
     y_lend = df_l[df_l['Tipe'].astype(str).str.capitalize() == 'Bunga']['Nominal'].sum() if not df_l.empty else 0
     
-    st.subheader("🗓️ Proyeksi Inflow Kas")
+    st.subheader("🗓️ Proyeksi Inflow Kas Bulanan")
     p1, p2, p3 = st.columns(3)
     p1.metric("Bunga Deposito", f"Rp {y_fund:,.0f}")
     p2.metric("Bunga Pinjaman", f"Rp {y_lend:,.0f}")
     p3.metric("Total Inflow Bulanan", f"Rp {y_fund + y_lend:,.0f}")
-
-    st.divider()
-    
-    st.subheader("🛡️ Risk Simulation Tool")
-    risk_choice = st.selectbox("Simulasi Penempatan ke Rating Lain:", ["AAA", "AA", "A", "BBB", "BB"])
-    spread_map = {"AAA": 0.8, "AA": 1.3, "A": 2.5, "BBB": 4.0, "BB": 6.5}
-    target_yield = current_sbn + spread_map[risk_choice]
-    
-    st.success(f"""
-    **Strategi Optimalisasi ({risk_choice}):**
-    - Estimasi Net Yield Baru: **{target_yield * 0.9:.2f}%**
-    - Potensi Kenaikan: **{((target_yield * 0.9) - (df_f['Net_Yield_Rate'].mean() if not df_f.empty else 0)):.2f}%** dibanding rata-rata saat ini.
-    """)
