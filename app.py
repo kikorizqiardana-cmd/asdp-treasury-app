@@ -13,22 +13,33 @@ import pytz
 # --- KONFIGURASI HALAMAN ---
 st.set_page_config(page_title="ASDP Treasury Command Center", layout="wide", page_icon="🚢")
 
-# --- FUNGSI ANIMASI LOTTIE ---
+# --- FUNGSI ANIMASI LOTTIE (DIPERBAIKI) ---
 def load_lottieurl(url):
-    r = requests.get(url)
-    if r.status_code != 200: return None
-    return r.json()
+    try:
+        r = requests.get(url, timeout=5) # Tambah timeout biar gak nunggu kelamaan
+        if r.status_code != 200:
+            return None
+        return r.json()
+    except:
+        return None
 
-lottie_ship = load_lottieurl("https://assets5.lottiefiles.com/packages/lf20_7wwmup6o.json")
+# Gunakan link yang lebih stabil atau backup
+lottie_url = "https://assets5.lottiefiles.com/packages/lf20_7wwmup6o.json"
+lottie_ship = load_lottieurl(lottie_url)
 
-# --- SPLASH SCREEN INTERAKTIF ---
+# --- SPLASH SCREEN INTERAKTIF (DIPERBAIKI) ---
 if 'initialized' not in st.session_state:
     st.session_state.initialized = False
 
 if not st.session_state.initialized:
     with st.container():
         st.markdown("<br><br>", unsafe_allow_html=True)
-        st_lottie(lottie_ship, height=300, key="loader")
+        # HANYA TAMPILKAN LOTTIE JIKA BERHASIL DI-LOAD
+        if lottie_ship:
+            st_lottie(lottie_ship, height=300, key="loader")
+        else:
+            st.info("🚢 Menyiapkan data ASDP... (Animasi dilewati karena koneksi)")
+            
         st.markdown("<h2 style='text-align: center; color: #004d99;'>Menyiapkan ASDP Treasury Command Center...</h2>", unsafe_allow_html=True)
         bar = st.progress(0)
         for i in range(100):
