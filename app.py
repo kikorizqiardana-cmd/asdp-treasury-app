@@ -24,11 +24,11 @@ def get_base64_image(image_path):
 logo_path = os.path.join(os.path.dirname(__file__), 'ferry.png')
 encoded_logo = get_base64_image(logo_path)
 
-# --- DATA ENGINE (THE ULTIMATE CLEANER) ---
+# --- DATA ENGINE ---
 def clean_numeric_robust(series):
     def process_val(val):
         val = str(val).strip().replace('Rp', '').replace('%', '').replace(' ', '')
-        if not val or val == 'nan' or val == 'None': return "0"
+        if not val or val == 'nan': return "0"
         commas, dots = val.count(','), val.count('.')
         if commas > 0 and dots > 0:
             if val.rfind(',') > val.rfind('.'): return val.replace('.', '').replace(',', '.')
@@ -50,11 +50,7 @@ def load_data():
         df_l = pd.read_csv(base_url + "Lending")
         df_f.columns = [c.strip() for c in df_f.columns]
         df_l.columns = [c.strip() for c in df_l.columns]
-        
-        # Penyelarasan Istilah Kreditur
-        if 'Debitur' in df_l.columns:
-            df_l.rename(columns={'Debitur': 'Kreditur'}, inplace=True)
-            
+        if 'Debitur' in df_l.columns: df_l.rename(columns={'Debitur': 'Kreditur'}, inplace=True)
         for df in [df_f, df_l]:
             for col in ['Nominal', 'Rate (%)', 'CoF (%)']:
                 if col in df.columns: df[col] = clean_numeric_robust(df[col])
@@ -89,25 +85,34 @@ st.title(f"🚢 ASDP Treasury Command Center")
 tab1, tab2, tab3 = st.tabs(["💰 Funding Monitor", "💸 Loan Payment (Debt)", "📊 ALM Net Position"])
 
 # ==========================================
-# WS 1: FUNDING (Uang Masuk)
+# WS 1: FUNDING MONITOR (SESUAI GAMBAR)
 # ==========================================
 with tab1:
-    st.header(f"Intelligence Funding - {selected_month}")
+    st.header(f"Funding Intelligence - {selected_month}")
+    
     if not df_f.empty:
+        # Perhitungan
         df_f['Net_Yield_Rate'] = df_f['Rate (%)'] * 0.8
         net_sbn = current_sbn * 0.9
         df_f['Monthly_Yield'] = (df_f['Nominal'] * (df_f['Rate (%)'] / 100)) / 12
         
-        # Alerts
-        c_a1, c_a2 = st.columns(2)
-        with c_a1:
-            st.markdown("**🚨 Underperform Alert**")
+        # 1. METRICS (BARIS ATAS)
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Total Placement", f"Rp {df_f['Nominal'].sum():,.0f}")
+        m2.metric("Total Yield Bulanan (B)", f"Rp {df_f['Monthly_Yield'].sum()/1e9:.2f} B")
+        m3.metric("Avg. Rate (Gross)", f"{df_f['Rate (%)'].mean():.2f}%")
+
+        # 2. ALERTS (DENGAN SCROLL)
+        st.subheader("🔔 Treasury Alerts")
+        col_a1, col_a2 = st.columns(2)
+        with col_a1:
+            st.markdown("**🚨 Underperform vs SBN Net**")
             with st.container(height=180):
                 under = df_f[df_f['Net_Yield_Rate'] < net_sbn]
                 if not under.empty:
                     for _, row in under.iterrows(): st.error(f"**{row['Bank']}** | Gap: {net_sbn - row['Net_Yield_Rate']:.2f}%")
                 else: st.success("Rate aman.")
-        with c_a2:
+        with col_a2:
             st.markdown("**⏳ Jatuh Tempo (H-7)**")
             with st.container(height=180):
                 today = datetime.now()
@@ -116,20 +121,30 @@ with tab1:
                     for _, row in soon.iterrows(): st.warning(f"**{row['Bank']}** | {row['Jatuh_Tempo'].strftime('%d-%m-%Y')}")
                 else: st.info("Tidak ada jatuh tempo dekat.")
 
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Total Placement", f"Rp {df_f['Nominal'].sum():,.0f}")
-        m2.metric("Total Yield (B)", f"Rp {df_f['Monthly_Yield'].sum()/1e9:.2f} B")
-        m3.metric("SBN Net Benchmark", f"{net_sbn:.2f}%")
-        
-        # Chart
-        df_bank = df_f.groupby('Bank')['Monthly_Yield'].sum().reset_index()
-        fig = px.bar(df_bank, x='Bank', y=df_bank['Monthly_Yield']/1e9, color='Bank', text_auto='.2f', title="Penerimaan Bunga per Bank (Rp Billion)")
-        fig.update_traces(texttemplate='%{y:.2f} B', textposition='outside')
-        fig.update_layout(showlegend=False, yaxis_title="Rp Billion")
-        st.plotly_chart(fig, use_container_width=True)
+        st.divider()
+
+        # 3. GRAFIK (BERDAMPINGAN)
+        st.markdown("### 📊 Analisis Penerimaan & Konsentrasi")
+        c1, c2 = st.columns([2, 1])
+        with c1:
+            df_bank = df_f.groupby('Bank')['Monthly_Yield'].sum().reset_index()
+            fig = px.bar(df_bank, x='Bank', y=df_bank['Monthly_Yield']/1e9, color='Bank', text_auto='.2f', 
+                         title="Penerimaan Bunga per Bank (Rp Billion)")
+            fig.update_traces(texttemplate='%{y:.2f} B', textposition='outside')
+            fig.update_layout(showlegend=False, yaxis_title="Rp Billion")
+            st.plotly_chart(fig, use_container_width=True)
+        with c2:
+            st.plotly_chart(px.pie(df_f, values='Nominal', names='Bank', hole=0.4, title="Komposisi Dana Bilyet"), use_container_width=True)
+
+        # 4. TABEL (PALING BAWAH)
+        with st.expander("Lihat Detail Tabel Data Funding", expanded=True):
+            df_disp = df_f.copy()
+            if 'Jatuh_Tempo' in df_disp.columns:
+                df_disp['Jatuh_Tempo'] = df_disp['Jatuh_Tempo'].dt.strftime('%d-%m-%Y')
+            st.dataframe(df_disp, use_container_width=True)
 
 # ==========================================
-# WS 2: LOAN PAYMENT (Uang Keluar)
+# WS 2: LOAN PAYMENT (PENCEGAHAN GAGAL BAYAR)
 # ==========================================
 with tab2:
     st.header(f"Monitoring Kewajiban Pembayaran - {selected_month}")
@@ -137,67 +152,45 @@ with tab2:
         df_l['Tipe'] = df_l['Tipe'].astype(str).str.strip().str.capitalize()
         total_out = df_l['Nominal'].sum()
         bunga_out = df_l[df_l['Tipe'] == 'Bunga']['Nominal'].sum()
-        pokok_out = df_l[df_l['Tipe'] == 'Pokok']['Nominal'].sum()
-
-        # DEBT ALERTS
-        st.subheader("⚠️ Debt Service Monitoring")
+        
+        # ALERTS
         c_l1, c_l2 = st.columns(2)
         with c_l1:
             st.markdown("**🚨 Jadwal Pembayaran H-7 (Siapkan Dana!)**")
-            with st.container(height=200):
+            with st.container(height=180):
                 today = datetime.now()
                 due = df_l[(df_l['Jatuh_Tempo'] >= today) & (df_l['Jatuh_Tempo'] <= today + timedelta(days=7))]
                 if not due.empty:
                     for _, row in due.iterrows():
-                        st.error(f"**{row['Kreditur']}** | Rp {row['Nominal']:,.0f} ({row['Tipe']}) | Jatuh Tempo: {row['Jatuh_Tempo'].strftime('%d-%m-%Y')}")
-                else: st.success("Tidak ada jadwal bayar kritis dalam 7 hari.")
+                        st.error(f"**{row['Kreditur']}** | Rp {row['Nominal']:,.0f} ({row['Tipe']}) | {row['Jatuh_Tempo'].strftime('%d-%m-%Y')}")
+                else: st.success("Aman.")
         with c_l2:
             st.markdown("**📉 Eksposur Kreditur Terbesar**")
-            with st.container(height=200):
+            with st.container(height=180):
                 top_k = df_l.groupby('Kreditur')['Nominal'].sum().idxmax()
-                st.warning(f"Kreditur dengan kewajiban tertinggi: **{top_k}**")
-                st.write("Pastikan likuiditas di rekening bank terkait sudah mencukupi sebelum jatuh tempo.")
+                st.warning(f"Prioritas Pembayaran: **{top_k}**")
 
         st.divider()
         l1, l2, l3 = st.columns(3)
-        l1.metric("Total Uang Keluar", f"Rp {total_out:,.0f}")
+        l1.metric("Total Debt Service", f"Rp {total_out:,.0f}")
         l2.metric("Beban Bunga (B)", f"Rp {bunga_out/1e9:.2f} B")
-        l3.metric("Pelunasan Pokok (B)", f"Rp {pokok_out/1e9:.2f} B")
+        l3.metric("Pelunasan Pokok (B)", f"Rp {(total_out-bunga_out)/1e9:.2f} B")
 
         # Chart
-        st.markdown("### 📊 Rekonsiliasi Pembayaran per Kreditur")
-        fig_l = px.bar(df_l, x='Kreditur', y=df_l['Nominal']/1e9, color='Tipe', barmode='stack', title="Kewajiban Pokok & Bunga (Rp Billion)", text_auto='.2f')
+        fig_l = px.bar(df_l, x='Kreditur', y=df_l['Nominal']/1e9, color='Tipe', barmode='stack', title="Kewajiban per Kreditur (Rp Billion)", text_auto='.2f')
         fig_l.update_traces(texttemplate='%{y:.2f} B', textposition='outside')
-        fig_l.update_layout(yaxis_title="Rp Billion")
         st.plotly_chart(fig_l, use_container_width=True)
-
-        with st.expander("Lihat Detail Tabel Kewajiban"):
-            df_l_disp = df_l.copy()
-            if 'Jatuh_Tempo' in df_l_disp.columns:
-                df_l_disp['Jatuh_Tempo'] = df_l_disp['Jatuh_Tempo'].dt.strftime('%d-%m-%Y')
-            st.dataframe(df_l_disp, use_container_width=True)
 
 # ==========================================
 # WS 3: ALM NET POSITION
 # ==========================================
 with tab3:
-    st.header("Asset Liability Management & Strategic Projection")
-    inc_bunga = df_f['Monthly_Yield'].sum() if not df_f.empty else 0
-    exp_bunga = df_l[df_l['Tipe'] == 'Bunga']['Nominal'].sum() if not df_l.empty else 0
-    net_interest = inc_bunga - exp_bunga
+    st.header("ALM & Liquidity Net Position")
+    inc_b = df_f['Monthly_Yield'].sum() if not df_f.empty else 0
+    exp_b = df_l[df_l['Tipe'] == 'Bunga']['Nominal'].sum() if not df_l.empty else 0
+    net_pos = inc_b - exp_b
     
-    st.subheader("💰 Net Interest Position (Bulan Ini)")
     p1, p2, p3 = st.columns(3)
-    p1.metric("Bunga Masuk (Asset)", f"Rp {inc_bunga:,.0f}")
-    p2.metric("Bunga Keluar (Liability)", f"Rp {exp_bunga:,.0f}")
-    p3.metric("Net Interest Position", f"Rp {net_interest:,.0f}", delta=f"{net_interest:,.0f}", delta_color="normal")
-
-    st.divider()
-    
-    st.subheader("🛡️ Strategic Simulation Tool")
-    choice = st.selectbox("Simulasi Optimalisasi Dana (Rating):", ["AAA", "AA", "A", "BBB"])
-    spreads = {"AAA": 0.8, "AA": 1.3, "A": 2.5, "BBB": 4.0}
-    target_net = (current_sbn + spreads[choice]) * 0.9
-    if not df_f.empty:
-        potensi_duit = (df_f['Nominal'].sum() * ((target_net - (df_f['Net_Yield_Rate'].mean()))/100)) / 12
-        st.success(f"Jika dioptimalkan ke rating **{choice}**, potensi tambahan laba bunga adalah **Rp {potensi_duit:,.0f}** per bulan.")
+    p1.metric("Bunga Masuk (Asset)", f"Rp {inc_b:,.0f}")
+    p2.metric("Bunga Keluar (Liability)", f"Rp {exp_b:,.0f}")
+    p3.metric("Net Position", f"Rp {net_pos:,.0f}", delta=f"{net_pos:,.0f}", delta_color="normal")
