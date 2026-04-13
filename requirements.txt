@@ -4,6 +4,5 @@ yfinance
 openpyxl
 plotly
 pytz
-st-gsheets-connection
 streamlit-lottie
 requests
