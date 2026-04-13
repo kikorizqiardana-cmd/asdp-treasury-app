@@ -27,7 +27,7 @@ if 'initialized' not in st.session_state:
 if not st.session_state.initialized:
     with st.container():
         st.markdown("<br><br>", unsafe_allow_html=True)
-        if lottie_ship: st_lottie(lottie_ship, height=300, key="asdp_v62_splash")
+        if lottie_ship: st_lottie(lottie_ship, height=300, key="asdp_v63_splash")
         st.markdown("<h2 style='text-align: center; color: #004d99;'>Menyiapkan Dashboard Executive ASDP...</h2>", unsafe_allow_html=True)
         bar = st.progress(0)
         for i in range(100):
@@ -53,8 +53,7 @@ def clean_numeric_robust(series):
         return val
     return pd.to_numeric(series.apply(process_val), errors='coerce').fillna(0)
 
-# TTL diubah jadi 1 detik agar tidak nyangkut data lama
-@st.cache_data(ttl=1)
+@st.cache_data(ttl=1) # Cache 1 detik agar selalu update
 def load_data():
     sheet_id = "182zKZj0Kr56yqOGM_XW2W3Q6fhaOSo8z9TIbjC_JxxY"
     base_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet="
@@ -104,7 +103,9 @@ df_l = df_l_raw[df_l_raw['Periode'] == selected_month].copy()
 st.title(f"🚢 ASDP Treasury Dashboard")
 tab1, tab2, tab3 = st.tabs(["💰 Funding Monitor", "💸 Loan Payment (Debt)", "📊 ALM Net Position"])
 
+# ==========================================
 # TAB 1: FUNDING
+# ==========================================
 with tab1:
     st.header(f"Funding Intelligence - {selected_month}")
     if not df_f.empty:
@@ -130,13 +131,13 @@ with tab1:
             st.markdown("**⏳ Jatuh Tempo (H-7)**")
             with st.container(height=180):
                 today = datetime.now()
-                # FIX SUPER AMAN: Paksa baca sebagai Datetime di sini juga
                 df_f['Jatuh_Tempo_Safe'] = pd.to_datetime(df_f['Jatuh_Tempo'], errors='coerce')
                 soon = df_f[(df_f['Jatuh_Tempo_Safe'] >= today) & (df_f['Jatuh_Tempo_Safe'] <= today + timedelta(days=7))]
                 
                 if not soon.empty:
                     for _, row in soon.iterrows():
-                        tgl = row['Jatuh_Tempo_Safe'].strftime('%d-%m-%Y')
+                        # Amankan format tanggal
+                        tgl = row['Jatuh_Tempo_Safe'].strftime('%d-%m-%Y') if pd.notnull(row['Jatuh_Tempo_Safe']) else "-"
                         st.warning(f"**{row['Bank']}** | {tgl}")
                 else: st.info("Tidak ada jatuh tempo dekat.")
 
@@ -154,14 +155,17 @@ with tab1:
         with st.expander("Detail Tabel Data Funding", expanded=True):
             df_disp = df_f.copy()
             if 'Jatuh_Tempo' in df_disp.columns:
-                # FIX SUPER AMAN: Konversi paksa, kalau kosong jadikan tanda strip (-)
-                df_disp['Jatuh_Tempo'] = pd.to_datetime(df_disp['Jatuh_Tempo'], errors='coerce').dt.strftime('%d-%m-%Y').fillna('-')
-            # Bersihkan kolom bantuan
+                # JURUS PAMUNGKAS: Pakai fungsi apply (anti-error)
+                df_disp['Jatuh_Tempo'] = df_disp['Jatuh_Tempo'].apply(lambda x: x.strftime('%d-%m-%Y') if pd.notnull(x) else '-')
+            
             if 'Jatuh_Tempo_Safe' in df_disp.columns:
                 df_disp = df_disp.drop(columns=['Jatuh_Tempo_Safe'])
+                
             st.dataframe(df_disp, use_container_width=True)
 
+# ==========================================
 # TAB 2: LOAN PAYMENT
+# ==========================================
 with tab2:
     st.header(f"Monitoring Kewajiban Pembayaran - {selected_month}")
     if not df_l.empty:
@@ -179,7 +183,7 @@ with tab2:
                 
                 if not due.empty:
                     for _, row in due.iterrows():
-                        tgl = row['Jatuh_Tempo_Safe'].strftime('%d-%m-%Y')
+                        tgl = row['Jatuh_Tempo_Safe'].strftime('%d-%m-%Y') if pd.notnull(row['Jatuh_Tempo_Safe']) else "-"
                         st.error(f"**{row['Kreditur']}** | Rp {row['Nominal']:,.0f} ({row['Tipe']}) | {tgl}")
                 else: st.success("Jadwal aman.")
         with c_l2:
@@ -201,12 +205,17 @@ with tab2:
         with st.expander("Detail Tabel Kewajiban", expanded=False):
             df_l_disp = df_l.copy()
             if 'Jatuh_Tempo' in df_l_disp.columns:
-                df_l_disp['Jatuh_Tempo'] = pd.to_datetime(df_l_disp['Jatuh_Tempo'], errors='coerce').dt.strftime('%d-%m-%Y').fillna('-')
+                # JURUS PAMUNGKAS: Pakai fungsi apply (anti-error)
+                df_l_disp['Jatuh_Tempo'] = df_l_disp['Jatuh_Tempo'].apply(lambda x: x.strftime('%d-%m-%Y') if pd.notnull(x) else '-')
+            
             if 'Jatuh_Tempo_Safe' in df_l_disp.columns:
                 df_l_disp = df_l_disp.drop(columns=['Jatuh_Tempo_Safe'])
+                
             st.dataframe(df_l_disp, use_container_width=True)
 
+# ==========================================
 # TAB 3: ALM
+# ==========================================
 with tab3:
     st.header("ALM & Liquidity Net Position")
     inc_b = df_f['Monthly_Yield'].sum() if not df_f.empty else 0
