@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import yfinance as yf
 import plotly.express as px
 from streamlit_lottie import st_lottie
 import requests
@@ -26,7 +25,7 @@ if 'initialized' not in st.session_state:
 if not st.session_state.initialized:
     with st.container():
         st.markdown("<br><br>", unsafe_allow_html=True)
-        if lottie_ship: st_lottie(lottie_ship, height=300, key="asdp_v7_splash")
+        if lottie_ship: st_lottie(lottie_ship, height=300, key="asdp_splash_final")
         st.markdown("<h2 style='text-align: center; color: #004d99;'>Menyiapkan Dashboard Executive ASDP...</h2>", unsafe_allow_html=True)
         bar = st.progress(0)
         for i in range(100):
@@ -77,7 +76,6 @@ df_f_raw, df_l_raw, error_msg = load_data()
 
 # --- 4. SIDEBAR (LOGO ASDP ONLINE) ---
 st.sidebar.markdown("<br>", unsafe_allow_html=True)
-# Menggunakan link gambar langsung dari Wikimedia, dijamin muncul!
 st.sidebar.image("https://upload.wikimedia.org/wikipedia/id/thumb/4/41/Logo_ASDP_Indonesia_Ferry.svg/1280px-Logo_ASDP_Indonesia_Ferry.svg.png", use_container_width=True)
 st.sidebar.markdown("---")
 
@@ -88,9 +86,8 @@ if error_msg:
 all_periods = sorted(list(set(df_f_raw['Periode'].unique()) | set(df_l_raw['Periode'].unique())), reverse=True)
 selected_month = st.sidebar.selectbox("Pilih Periode Analisis:", all_periods, index=0)
 
-try:
-    sbn_val = round(float(yf.Ticker("ID10Y=F").history(period="1d")['Close'].iloc[-1]), 2)
-except: sbn_val = 6.65
+# YFINANCE DIHAPUS, DIGANTI MANUAL INPUT (Default 6.65%)
+sbn_val = 6.65 
 
 st.sidebar.header("⚙️ Market Benchmark")
 current_sbn = st.sidebar.number_input("Benchmark SBN 10Y (%)", value=sbn_val, step=0.01, format="%.2f")
