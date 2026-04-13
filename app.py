@@ -6,14 +6,14 @@ import plotly.graph_objects as go
 from streamlit_lottie import st_lottie
 import requests
 import time
-# --- BARIS INI YANG WAJIB ADA UNTUK FIX ERROR TADI ---
-from datetime import datetime, timedelta 
-import base64
+from datetime import datetime, timedelta
+import base64  # <-- INI YANG BIKIN ERROR TADI, SEKARANG SUDAH ADA!
 import os
 
 # --- 1. CONFIG ---
 st.set_page_config(page_title="ASDP Treasury Command Center", layout="wide", page_icon="🚢")
 
+# Fungsi Ambil Gambar (Fix Base64 Error)
 def get_base64_image(image_path):
     try:
         if os.path.exists(image_path):
@@ -25,7 +25,31 @@ def get_base64_image(image_path):
 logo_path = os.path.join(os.path.dirname(__file__), 'ferry.png')
 encoded_logo = get_base64_image(logo_path)
 
-# --- DATA ENGINE ---
+def load_lottieurl(url):
+    try:
+        r = requests.get(url, timeout=10)
+        return r.json() if r.status_code == 200 else None
+    except: return None
+
+lottie_ship = load_lottieurl("https://assets5.lottiefiles.com/packages/lf20_7wwmup6o.json")
+
+# --- 2. SPLASH SCREEN ---
+if 'initialized' not in st.session_state:
+    st.session_state.initialized = False
+
+if not st.session_state.initialized:
+    with st.container():
+        st.markdown("<br><br>", unsafe_allow_html=True)
+        if lottie_ship: st_lottie(lottie_ship, height=300, key="asdp_final_final")
+        st.markdown("<h2 style='text-align: center; color: #004d99;'>Menyiapkan Dashboard Executive ASDP...</h2>", unsafe_allow_html=True)
+        bar = st.progress(0)
+        for i in range(100):
+            time.sleep(0.01)
+            bar.progress(i + 1)
+        st.session_state.initialized = True
+        st.rerun()
+
+# --- 3. DATA ENGINE (ROBUST CLEANER) ---
 def clean_numeric_robust(series):
     def process_val(val):
         val = str(val).strip().replace('Rp', '').replace('%', '').replace(' ', '')
@@ -51,10 +75,7 @@ def load_data():
         df_l = pd.read_csv(base_url + "Lending")
         df_f.columns = [c.strip() for c in df_f.columns]
         df_l.columns = [c.strip() for c in df_l.columns]
-        
-        # Kreditur Correction
         if 'Debitur' in df_l.columns: df_l.rename(columns={'Debitur': 'Kreditur'}, inplace=True)
-        
         for df in [df_f, df_l]:
             for col in ['Nominal', 'Rate (%)', 'CoF (%)']:
                 if col in df.columns: df[col] = clean_numeric_robust(df[col])
@@ -66,7 +87,7 @@ def load_data():
 
 df_f_raw, df_l_raw, error_msg = load_data()
 
-# --- 2. SIDEBAR ---
+# --- 4. SIDEBAR ---
 if encoded_logo:
     st.sidebar.markdown(f'<div style="text-align: center;"><img src="data:image/png;base64,{encoded_logo}" width="200"></div>', unsafe_allow_html=True)
 else:
@@ -84,13 +105,10 @@ current_sbn = st.sidebar.number_input("Benchmark SBN 10Y (%)", value=sbn_val, st
 df_f = df_f_raw[df_f_raw['Periode'] == selected_month].copy()
 df_l = df_l_raw[df_l_raw['Periode'] == selected_month].copy()
 
-# --- 3. DASHBOARD UI ---
-st.title(f"🚢 ASDP Treasury Command Center")
+# --- 5. DASHBOARD UI ---
 tab1, tab2, tab3 = st.tabs(["💰 Funding Monitor", "💸 Loan Payment (Debt)", "📊 ALM Net Position"])
 
-# ==========================================
-# WS 1: FUNDING MONITOR (LAYOUT SESUAI PIC)
-# ==========================================
+# WS 1: FUNDING
 with tab1:
     st.header(f"Funding Intelligence - {selected_month}")
     if not df_f.empty:
@@ -98,17 +116,15 @@ with tab1:
         net_sbn = current_sbn * 0.9
         df_f['Monthly_Yield'] = (df_f['Nominal'] * (df_f['Rate (%)'] / 100)) / 12
         
-        # 1. METRICS ATAS
         m1, m2, m3 = st.columns(3)
         m1.metric("Total Placement", f"Rp {df_f['Nominal'].sum():,.0f}")
         m2.metric("Total Yield Bulanan (B)", f"Rp {df_f['Monthly_Yield'].sum()/1e9:.2f} B")
         m3.metric("Avg Rate (Gross)", f"{df_f['Rate (%)'].mean():.2f}%")
 
-        # 2. ALERTS (SCROLLABLE)
         st.subheader("🔔 Treasury Alerts")
         c_a1, c_a2 = st.columns(2)
         with c_a1:
-            st.markdown("**🚨 Underperform vs SBN Net**")
+            st.markdown("**🚨 Underperform Alert**")
             with st.container(height=180):
                 under = df_f[df_f['Net_Yield_Rate'] < net_sbn]
                 if not under.empty:
@@ -117,7 +133,6 @@ with tab1:
         with c_a2:
             st.markdown("**⏳ Jatuh Tempo (H-7)**")
             with st.container(height=180):
-                # FIX: 'datetime' dipanggil di sini
                 today = datetime.now()
                 soon = df_f[(df_f['Jatuh_Tempo'] >= today) & (df_f['Jatuh_Tempo'] <= today + timedelta(days=7))]
                 if not soon.empty:
@@ -125,29 +140,23 @@ with tab1:
                 else: st.info("Tidak ada jatuh tempo dekat.")
 
         st.divider()
-
-        # 3. GRAFIK BERDAMPINGAN
         c1, c2 = st.columns([2, 1])
         with c1:
             df_bank = df_f.groupby('Bank')['Monthly_Yield'].sum().reset_index()
-            fig = px.bar(df_bank, x='Bank', y=df_bank['Monthly_Yield']/1e9, color='Bank', text_auto='.2f', 
-                         title="Penerimaan Bunga per Bank (Rp Billion)")
+            fig = px.bar(df_bank, x='Bank', y=df_bank['Monthly_Yield']/1e9, color='Bank', text_auto='.2f', title="Penerimaan Bunga per Bank (Rp Billion)")
             fig.update_traces(texttemplate='%{y:.2f} B', textposition='outside')
             fig.update_layout(showlegend=False, yaxis_title="Rp Billion")
             st.plotly_chart(fig, use_container_width=True)
         with c2:
             st.plotly_chart(px.pie(df_f, values='Nominal', names='Bank', hole=0.4, title="Konsentrasi Dana"), use_container_width=True)
 
-        # 4. TABEL PALING BAWAH
         with st.expander("Detail Tabel Data Funding", expanded=True):
             df_disp = df_f.copy()
             if 'Jatuh_Tempo' in df_disp.columns:
                 df_disp['Jatuh_Tempo'] = df_disp['Jatuh_Tempo'].dt.strftime('%d-%m-%Y')
             st.dataframe(df_disp, use_container_width=True)
 
-# ==========================================
-# WS 2: LOAN PAYMENT (PENCEGAHAN GAGAL BAYAR)
-# ==========================================
+# WS 2: LOAN PAYMENT
 with tab2:
     st.header(f"Monitoring Kewajiban Pembayaran - {selected_month}")
     if not df_l.empty:
@@ -181,11 +190,9 @@ with tab2:
         fig_l.update_traces(texttemplate='%{y:.2f} B', textposition='outside')
         st.plotly_chart(fig_l, use_container_width=True)
 
-# ==========================================
-# WS 3: ALM NET POSITION
-# ==========================================
+# WS 3: ALM
 with tab3:
-    st.header("ALM & Liquidity Net Position")
+    st.header("ALM Net Position & Strategy")
     inc_b = df_f['Monthly_Yield'].sum() if not df_f.empty else 0
     exp_b = df_l[df_l['Tipe'] == 'Bunga']['Nominal'].sum() if not df_l.empty else 0
     net_pos = inc_b - exp_b
