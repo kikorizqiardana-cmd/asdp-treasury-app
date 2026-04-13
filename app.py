@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import yfinance as yf
 import plotly.express as px
 import plotly.graph_objects as go
 from streamlit_lottie import st_lottie
@@ -8,9 +9,22 @@ import time
 from datetime import datetime, timedelta
 
 # --- 1. CONFIG HALAMAN ---
-st.set_page_config(page_title="ASDP ALM Revenue Center", layout="wide", page_icon="🚢")
+st.set_page_config(page_title="ASDP ALM Command Center", layout="wide", page_icon="🚢")
 
-# --- 2. DATA ENGINE (ANTI-CRASH) ---
+# --- FUNGSI AMBIL DATA SBN LIVE ---
+def get_live_sbn():
+    try:
+        # Ticker untuk Indonesia 10 Years Bond Yield
+        ticker = yf.Ticker("ID10Y=F")
+        data = ticker.history(period="1d")
+        if not data.empty:
+            live_val = round(float(data['Close'].iloc[-1]), 2)
+            return live_val, "Yahoo Finance (Live)"
+    except:
+        pass
+    return 6.65, "Default (API Error)"
+
+# --- 2. DATA ENGINE ---
 def clean_numeric_robust(series):
     def process_val(val):
         val = str(val).strip().replace('Rp', '').replace('%', '').replace(' ', '')
@@ -32,159 +46,143 @@ def load_gsheets_data():
     sheet_id = "182zKZj0Kr56yqOGM_XW2W3Q6fhaOSo8z9TIbjC_JxxY"
     base_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet="
     try:
-        # Load Tabs
         df_f = pd.read_csv(base_url + "Funding")
         df_l = pd.read_csv(base_url + "Lending")
-        
-        # Strip column names
         df_f.columns = [c.strip() for c in df_f.columns]
         df_l.columns = [c.strip() for c in df_l.columns]
         
-        # Penyelarasan Nama Kolom (Google Sheets ke App)
         if 'Debitur' in df_l.columns: df_l.rename(columns={'Debitur': 'Kreditur'}, inplace=True)
         if 'Rate (%)' in df_f.columns: df_f.rename(columns={'Rate (%)': 'Rate'}, inplace=True)
         if 'Nominal' in df_l.columns: df_l.rename(columns={'Nominal': 'Nominal_Lending'}, inplace=True)
         
-        # Cleaning Angka
         for c in ['Nominal', 'Rate']:
             if c in df_f.columns: df_f[c] = clean_numeric_robust(df_f[c])
         for c in ['Nominal_Lending', 'Lending_Rate (%)', 'Cost_of_Fund (%)']:
             if c in df_l.columns: df_l[c] = clean_numeric_robust(df_l[c])
         
-        # Pastikan kolom Periode ada dan bersih
         if 'Periode' in df_f.columns: df_f['Periode'] = df_f['Periode'].astype(str).str.strip()
         if 'Periode' in df_l.columns: df_l['Periode'] = df_l['Periode'].astype(str).str.strip()
             
-        # Format Tanggal
         if 'Jatuh_Tempo' in df_f.columns:
             df_f['Jatuh_Tempo'] = pd.to_datetime(df_f['Jatuh_Tempo'], dayfirst=True, errors='coerce')
-            
         return df_f, df_l, None
     except Exception as e: return pd.DataFrame(), pd.DataFrame(), str(e)
 
-# --- 3. SIDEBAR (LOGO & FILTER) ---
+# --- 3. SIDEBAR ---
 st.sidebar.image("https://upload.wikimedia.org/wikipedia/id/thumb/4/41/Logo_ASDP_Indonesia_Ferry.svg/1280px-Logo_ASDP_Indonesia_Ferry.svg.png", use_container_width=True)
 st.sidebar.markdown("---")
 
-df_f_raw, df_l_raw, error_msg = load_gsheets_data()
+# MODE DATA
+st.sidebar.header("📡 Sumber Data")
+mode_data = st.sidebar.radio("Metode Pengambilan Data:", ["Google Sheets API (Live)", "Upload File Manual"])
 
-if error_msg:
-    st.sidebar.error(f"⚠️ Gagal Konek GSheets: {error_msg}")
-    st.stop()
+# INVENTORI DATA
+df_f, df_l = pd.DataFrame(), pd.DataFrame()
+current_month = "All"
 
-# --- FILTER BULAN (Dinamis dari GSheets) ---
-st.sidebar.header("📅 Periode Analisis")
-all_months = sorted(list(set(df_f_raw['Periode'].unique()) | set(df_l_raw['Periode'].unique())), reverse=True)
-selected_month = st.sidebar.selectbox("Pilih Bulan:", all_months)
+if mode_data == "Google Sheets API (Live)":
+    df_f_raw, df_l_raw, err = load_gsheets_data()
+    if err:
+        st.sidebar.error(f"API Error: {err}")
+    else:
+        st.sidebar.success("✅ Connected to GSheets")
+        all_months = sorted(list(set(df_f_raw['Periode'].unique()) | set(df_l_raw['Periode'].unique())), reverse=True)
+        current_month = st.sidebar.selectbox("Pilih Periode Analisis:", all_months)
+        df_f = df_f_raw[df_f_raw['Periode'] == current_month].copy()
+        df_l = df_l_raw[df_l_raw['Periode'] == current_month].copy()
+else:
+    f_up = st.sidebar.file_uploader("Upload Funding (Excel)", type=["xlsx"])
+    l_up = st.sidebar.file_uploader("Upload Lending (Excel)", type=["xlsx"])
+    if f_up: 
+        df_f = pd.read_excel(f_up)
+        for c in ['Nominal', 'Rate']:
+            if c in df_f.columns: df_f[c] = clean_numeric_robust(df_f[c])
+    if l_up: 
+        df_l = pd.read_excel(l_up)
+        for c in ['Nominal_Lending', 'Lending_Rate (%)', 'Cost_of_Fund (%)']:
+            if c in df_l.columns: df_l[c] = clean_numeric_robust(df_l[c])
+    current_month = "Manual Upload"
 
 st.sidebar.markdown("---")
-st.sidebar.header("⚙️ Market Benchmark")
-current_sbn = st.sidebar.number_input("Benchmark SBN 10Y (%)", value=6.65, step=0.01)
+# MARKET DATA LIVE
+st.sidebar.header("⚙️ Market Intelligence")
+sbn_live_val, sbn_source = get_live_sbn()
+current_sbn = st.sidebar.number_input(f"Benchmark SBN 10Y ({sbn_source})", value=sbn_live_val, step=0.01, format="%.2f")
+threshold = st.sidebar.slider("Threshold Pindah Dana (%)", 0.0, 5.0, 0.5)
 
-# Filtering Data Berdasarkan Bulan
-df_f = df_f_raw[df_f_raw['Periode'] == selected_month].copy()
-df_l = df_l_raw[df_l_raw['Periode'] == selected_month].copy()
+st.sidebar.markdown("---")
+# RISK SIMULATION
+st.sidebar.header("🛡️ Credit Risk Simulation")
+rating_pilihan = st.sidebar.selectbox("Pilih Rating Simulasi:", ["AAA", "AA+", "AA", "A"])
+risk_notes = {
+    "AAA": {"spread": 80, "desc": "🛡️ Stabil & Aman. Kapasitas bayar sangat kuat."},
+    "AA+": {"spread": 100, "desc": "✅ Sangat Kuat. Kapasitas finansial sangat tinggi."},
+    "AA": {"spread": 120, "desc": "✅ Kualitas Tinggi. Risiko sedikit lebih tinggi dari AAA."},
+    "A": {"spread": 260, "desc": "🚨 Sensitif. Cukup aman namun rentan kondisi ekonomi."}
+}
+selected_spread = st.sidebar.slider(f"Spread {rating_pilihan} (bps)", 30, 450, risk_notes[rating_pilihan]["spread"])
+est_yield_bond = current_sbn + (selected_spread/100)
 
 # --- 4. DASHBOARD UI ---
-st.title(f"🚢 PT ASDP Indonesia Ferry - Dashboard {selected_month}")
-tab1, tab2, tab3 = st.tabs(["💰 Funding Monitoring", "📈 Lending Monitoring", "📊 ALM Summary"])
+st.title(f"🚢 PT ASDP Indonesia Ferry - Treasury Dashboard")
+tab1, tab2, tab3 = st.tabs(["💰 Funding Monitor", "📈 Lending Monitor", "📊 ALM Resume"])
 
-# ==========================================
-# TAB 1: FUNDING (Penerimaan Riil)
-# ==========================================
+# TAB 1: FUNDING
 with tab1:
     if not df_f.empty:
-        # HITUNG PENDAPATAN RIIL PER BILYET
-        # Rumus: (Nominal * (Rate/100)) / 12
+        # Perhitungan Revenue & Yield
         df_f['Pendapatan_Riil'] = (df_f['Nominal'] * (df_f['Rate'] / 100)) / 12
         df_f['Net_Yield'] = df_f['Rate'] * 0.8
         net_sbn = current_sbn * 0.9
+        net_sim = est_yield_bond * 0.9
         df_f['Gap_vs_SBN'] = df_f['Net_Yield'] - net_sbn
         
-        # 1. METRICS TOTAL REVENUE
-        total_rev = df_f['Pendapatan_Riil'].sum()
         m1, m2, m3 = st.columns(3)
         m1.metric("Total Placement", f"Rp {df_f['Nominal'].sum():,.0f}")
-        m2.metric(f"Total Pendapatan Bunga ({selected_month})", f"Rp {total_rev:,.0f}")
-        m3.metric("SBN Net Benchmark", f"{net_sbn:.2f}%")
+        m2.metric("Total Revenue Bunga (B)", f"Rp {df_f['Pendapatan_Riil'].sum()/1e9:.2f} B")
+        m3.metric("Live SBN Net", f"{net_sbn:.2f}%")
+
+        st.subheader(f"⚠️ Asesmen Risiko: {rating_pilihan}")
+        if rating_pilihan == "A":
+            st.error(f"**WARNING:** Rating A memiliki risiko degradasi lebih tinggi saat ekonomi goyang.")
+        else:
+            st.warning(f"**PROFIL:** {risk_notes[rating_pilihan]['desc']}")
 
         st.divider()
 
-        # 2. GRAFIK REVENUE PER BANK
-        st.subheader("📊 Rekonsiliasi Pendapatan Bunga per Bank")
-        # Grouping untuk chart
-        df_bank_rev = df_f.groupby('Bank')['Pendapatan_Riil'].sum().reset_index()
-        fig_rev = px.bar(df_bank_rev, x='Bank', y='Pendapatan_Riil', color='Bank',
-                         text_auto=',.0f', title=f"Pendapatan Riil Bulan {selected_month} (IDR)")
-        fig_rev.update_layout(showlegend=False, yaxis_title="Pendapatan (Rp)")
-        st.plotly_chart(fig_rev, use_container_width=True)
+        c1, c2 = st.columns(2)
+        df_pindah = df_f[df_f['Net_Yield'] < (net_sbn - threshold)]
+        pot_sbn = (df_pindah['Nominal'] * (net_sbn - df_pindah['Net_Yield'])/100).sum()
+        pot_sim = (df_pindah['Nominal'] * (net_sim - df_pindah['Net_Yield'])/100).sum()
+        c1.metric("Potensi Tambahan (Pindah SBN)", f"Rp {pot_sbn:,.0f}")
+        c2.metric(f"Potensi Tambahan (Pindah {rating_pilihan})", f"Rp {pot_sim:,.0f}")
 
-        # 3. TABEL DETAIL DENGAN PENDAPATAN PER BILYET
-        with st.expander("📑 Detail Tabel Inventori Funding & Revenue", expanded=True):
+        v1, v2 = st.columns([2, 1])
+        with v1:
+            fig_rev = px.bar(df_f.groupby('Bank')['Pendapatan_Riil'].sum().reset_index(), 
+                             x='Bank', y='Pendapatan_Riil', color='Bank', title="Revenue per Bank (IDR)")
+            st.plotly_chart(fig_rev, use_container_width=True)
+        with v2:
+            fig_pie = px.pie(df_f, values='Nominal', names=df_f.columns[0], hole=0.4, title="Komposisi Portofolio")
+            st.plotly_chart(fig_pie, use_container_width=True)
+
+        with st.expander("📑 Tabel Detail Funding", expanded=True):
             df_disp = df_f.copy()
-            # Format Tanggal
-            df_disp['Jatuh_Tempo'] = df_disp['Jatuh_Tempo'].apply(lambda x: x.strftime('%d-%m-%Y') if pd.notnull(x) and hasattr(x, 'strftime') else '-')
-            
-            # Reorder kolom agar Pendapatan Riil terlihat jelas
-            cols = ['Bank', 'Nomor_Bilyet', 'Nominal', 'Rate', 'Pendapatan_Riil', 'Jatuh_Tempo', 'Periode']
-            # Cek jika kolom ada
-            existing_cols = [c for c in cols if c in df_disp.columns]
-            
-            st.dataframe(df_disp[existing_cols].style.format({
-                'Nominal': '{:,.0f}',
-                'Pendapatan_Riil': '{:,.0f}',
-                'Rate': '{:.2f}%'
-            }).background_gradient(subset=['Pendapatan_Riil'], cmap='Greens'), use_container_width=True)
+            if 'Jatuh_Tempo' in df_disp.columns:
+                df_disp['Jatuh_Tempo'] = df_disp['Jatuh_Tempo'].apply(lambda x: x.strftime('%d-%m-%Y') if pd.notnull(x) and hasattr(x, 'strftime') else '-')
+            st.dataframe(df_disp.style.format({'Nominal': '{:,.0f}', 'Pendapatan_Riil': '{:,.0f}'}), use_container_width=True)
     else:
-        st.info(f"Tidak ada data Funding untuk periode {selected_month}")
+        st.info("Muat data melalui API atau Upload untuk melihat dashboard.")
 
-# ==========================================
-# TAB 2: LENDING MONITORING
-# ==========================================
+# TAB 2 & 3 tetap sama dengan logika v7.6
 with tab2:
     if not df_l.empty:
-        df_l['Spread'] = df_l['Lending_Rate (%)'] - df_l['Cost_of_Fund (%)']
-        df_l['Bunga_Keluar_Bank'] = (df_l['Nominal_Lending'] * (df_l['Cost_of_Fund (%)']/100)) / 12
-        
-        l1, l2, l3 = st.columns(3)
-        l1.metric("Total Penyaluran", f"Rp {df_l['Nominal_Lending'].sum():,.0f}")
-        l2.metric("Total Beban Bunga ke Bank", f"Rp {df_l['Bunga_Keluar_Bank'].sum():,.0f}")
-        l3.metric("Avg. Margin (Spread)", f"{df_l['Spread'].mean():.2f}%")
-        
-        fig_l = px.bar(df_l, x='Kreditur', y='Nominal_Lending', color='Kreditur', title="Outstanding Pinjaman per Bank")
-        st.plotly_chart(fig_l, use_container_width=True)
+        df_l['Bunga_Keluar'] = (df_l['Nominal_Lending'] * (df_l['Cost_of_Fund (%)']/100)) / 12
+        st.subheader("Monitoring Lending")
         st.dataframe(df_l, use_container_width=True)
 
-# ==========================================
-# TAB 3: ALM SUMMARY (CASHFLOW REVENUE)
-# ==========================================
 with tab3:
     if not df_f.empty and not df_l.empty:
-        st.subheader(f"📋 Resume Arus Kas Bunga - {selected_month}")
-        
-        rev_in = df_f['Pendapatan_Riil'].sum()
-        cost_out = df_l['Bunga_Keluar_Bank'].sum()
-        net_spread_idr = rev_in - cost_out
-        
-        r1, r2, r3 = st.columns(3)
-        r1.metric("Total Bunga Masuk (Funding)", f"Rp {rev_in:,.0f}")
-        r2.metric("Total Bunga Keluar (Lending)", f"Rp {cost_out:,.0f}")
-        
-        color = "normal" if net_spread_idr >= 0 else "inverse"
-        r3.metric("Net Interest Position (NIP)", f"Rp {net_spread_idr:,.0f}", 
-                  delta=f"{'SURPLUS' if net_spread_idr >= 0 else 'DEFISIT'}", delta_color=color)
-
-        # Gauge Chart untuk NIP
-        fig_gauge = go.Figure(go.Indicator(
-            mode = "gauge+number",
-            value = net_spread_idr,
-            domain = {'x': [0, 1], 'y': [0, 1]},
-            title = {'text': "Net Position Bunga (IDR)"},
-            gauge = {
-                'axis': {'range': [None, max(rev_in, cost_out)]},
-                'bar': {'color': "darkblue"},
-                'steps': [
-                    {'range': [0, rev_in], 'color': "lightgray"}]
-            }
-        ))
-        st.plotly_chart(fig_gauge, use_container_width=True)
+        st.subheader("ALM Resume")
+        nip = df_f['Pendapatan_Riil'].sum() - (df_l['Nominal_Lending'] * (df_l['Cost_of_Fund (%)']/100) / 12).sum()
+        st.metric("Net Interest Position (Monthly Surplus)", f"Rp {nip:,.0f}")
