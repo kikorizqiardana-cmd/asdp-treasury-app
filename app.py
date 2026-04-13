@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import plotly.express as px
-import plotly.graph_objects as go
 from streamlit_lottie import st_lottie
 import requests
 import time
@@ -27,7 +26,7 @@ if 'initialized' not in st.session_state:
 if not st.session_state.initialized:
     with st.container():
         st.markdown("<br><br>", unsafe_allow_html=True)
-        if lottie_ship: st_lottie(lottie_ship, height=300, key="asdp_v63_splash")
+        if lottie_ship: st_lottie(lottie_ship, height=300, key="asdp_v7_splash")
         st.markdown("<h2 style='text-align: center; color: #004d99;'>Menyiapkan Dashboard Executive ASDP...</h2>", unsafe_allow_html=True)
         bar = st.progress(0)
         for i in range(100):
@@ -53,7 +52,7 @@ def clean_numeric_robust(series):
         return val
     return pd.to_numeric(series.apply(process_val), errors='coerce').fillna(0)
 
-@st.cache_data(ttl=1) # Cache 1 detik agar selalu update
+@st.cache_data(ttl=1)
 def load_data():
     sheet_id = "182zKZj0Kr56yqOGM_XW2W3Q6fhaOSo8z9TIbjC_JxxY"
     base_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet="
@@ -76,10 +75,10 @@ def load_data():
 
 df_f_raw, df_l_raw, error_msg = load_data()
 
-# --- 4. SIDEBAR ---
+# --- 4. SIDEBAR (LOGO ASDP ONLINE) ---
 st.sidebar.markdown("<br>", unsafe_allow_html=True)
-st.sidebar.image("https://www.indonesiaferry.co.id/img/logo.png", use_container_width=True)
-st.sidebar.markdown("<h3 style='text-align: center; color: #004d99; margin-top: -10px;'>Indonesia Ferry (Persero)</h3>", unsafe_allow_html=True)
+# Menggunakan link gambar langsung dari Wikimedia, dijamin muncul!
+st.sidebar.image("https://upload.wikimedia.org/wikipedia/id/thumb/4/41/Logo_ASDP_Indonesia_Ferry.svg/1280px-Logo_ASDP_Indonesia_Ferry.svg.png", use_container_width=True)
 st.sidebar.markdown("---")
 
 if error_msg:
@@ -136,7 +135,6 @@ with tab1:
                 
                 if not soon.empty:
                     for _, row in soon.iterrows():
-                        # Amankan format tanggal
                         tgl = row['Jatuh_Tempo_Safe'].strftime('%d-%m-%Y') if pd.notnull(row['Jatuh_Tempo_Safe']) else "-"
                         st.warning(f"**{row['Bank']}** | {tgl}")
                 else: st.info("Tidak ada jatuh tempo dekat.")
@@ -155,12 +153,9 @@ with tab1:
         with st.expander("Detail Tabel Data Funding", expanded=True):
             df_disp = df_f.copy()
             if 'Jatuh_Tempo' in df_disp.columns:
-                # JURUS PAMUNGKAS: Pakai fungsi apply (anti-error)
                 df_disp['Jatuh_Tempo'] = df_disp['Jatuh_Tempo'].apply(lambda x: x.strftime('%d-%m-%Y') if pd.notnull(x) else '-')
-            
             if 'Jatuh_Tempo_Safe' in df_disp.columns:
                 df_disp = df_disp.drop(columns=['Jatuh_Tempo_Safe'])
-                
             st.dataframe(df_disp, use_container_width=True)
 
 # ==========================================
@@ -205,12 +200,9 @@ with tab2:
         with st.expander("Detail Tabel Kewajiban", expanded=False):
             df_l_disp = df_l.copy()
             if 'Jatuh_Tempo' in df_l_disp.columns:
-                # JURUS PAMUNGKAS: Pakai fungsi apply (anti-error)
                 df_l_disp['Jatuh_Tempo'] = df_l_disp['Jatuh_Tempo'].apply(lambda x: x.strftime('%d-%m-%Y') if pd.notnull(x) else '-')
-            
             if 'Jatuh_Tempo_Safe' in df_l_disp.columns:
                 df_l_disp = df_l_disp.drop(columns=['Jatuh_Tempo_Safe'])
-                
             st.dataframe(df_l_disp, use_container_width=True)
 
 # ==========================================
