@@ -1,8 +1,7 @@
 streamlit
 pandas
 yfinance
-openpyxl
 plotly
-pytz
 streamlit-lottie
 requests
+openpyxl
