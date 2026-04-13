@@ -7,7 +7,7 @@ import os
 from datetime import datetime, timedelta
 
 # --- 1. CONFIG HALAMAN ---
-st.set_page_config(page_title="ASDP Revenue Performance", layout="wide", page_icon="🚢")
+st.set_page_config(page_title="ASDP Revenue Distribution", layout="wide", page_icon="🚢")
 
 # --- 2. DATA ENGINE ---
 def clean_numeric_robust(series):
@@ -71,18 +71,18 @@ current_sbn = st.sidebar.number_input(f"SBN 10Y Benchmark ({sbn_source})", value
 
 st.sidebar.markdown("---")
 st.sidebar.header("🏢 Bond/Sukuk Simulator")
-rating = st.sidebar.selectbox("Pilih Target Rating Reinvestasi:", ["AAA", "AA+", "AA", "A", "BBB"])
+rating = st.sidebar.selectbox("Pilih Rating Reinvestasi:", ["AAA", "AA+", "AA", "A", "BBB"])
 spread_map = {"AAA": 80, "AA+": 110, "AA": 140, "A": 260, "BBB": 480}
 sel_spread = st.sidebar.slider(f"Spread {rating} (bps)", 0, 600, spread_map[rating])
 target_bond_gross = current_sbn + (sel_spread / 100)
 
 # --- 4. DASHBOARD UI ---
-st.title(f"🚢 ASDP Revenue & Yield Strategic Dashboard")
-tab1, tab2 = st.tabs(["💰 Performance per Bank", "📈 Lending Monitor"])
+st.title(f"🚢 ASDP Treasury & Revenue Command Center")
+tab1, tab2 = st.tabs(["💰 Revenue Distribution", "📈 Lending Monitor"])
 
 with tab1:
     if not df_f.empty:
-        # Perhitungan
+        # Perhitungan Pajak (Depo 20%, SBN/Bond 10%)
         df_f['Net_Yield'] = df_f['Rate'] * 0.8
         net_sbn = current_sbn * 0.9
         net_bond = target_bond_gross * 0.9
@@ -92,24 +92,24 @@ with tab1:
         m1, m2, m3 = st.columns(3)
         m1.metric("Total Placement", f"Rp {df_f['Nominal'].sum():,.0f}")
         m2.metric(f"Total Revenue ({sel_month})", f"Rp {df_f['Pendapatan_Riil'].sum():,.0f}")
-        m3.metric(f"Benchmark SBN Net", f"{net_sbn:.2f}%")
+        m3.metric(f"Bond Net Target ({rating})", f"{net_bond:.2f}%")
 
         st.divider()
 
-        # 2. SCROLLABLE ALERTS
+        # 2. ALERTS (SCROLLABLE)
         col_a1, col_a2 = st.columns(2)
         with col_a1:
-            st.subheader("🚩 Underperform Alerts (vs SBN)")
-            with st.container(height=150):
+            st.subheader("🚩 Spread Alert (vs SBN)")
+            with st.container(height=180):
                 df_loss = df_f[df_f['Net_Yield'] < net_sbn]
                 if not df_loss.empty:
                     for _, row in df_loss.iterrows():
-                        st.error(f"**{row['Bank']}** | Yield Net: `{row['Net_Yield']:.2f}%` | Revenue: `Rp {row['Pendapatan_Riil']:,.0f}`")
+                        st.error(f"**{row['Bank']}** | Yield Net: `{row['Net_Yield']:.2f}%` | Rev: `Rp {row['Pendapatan_Riil']:,.0f}`")
                 else: st.success("Seluruh penempatan optimal.")
 
         with col_a2:
             st.subheader("⏳ Maturity Watch (H-14)")
-            with st.container(height=150):
+            with st.container(height=180):
                 today = datetime.now()
                 df_soon = df_f[(df_f['Jatuh_Tempo'] >= today) & (df_f['Jatuh_Tempo'] <= today + timedelta(days=14))]
                 if not df_soon.empty:
@@ -119,8 +119,8 @@ with tab1:
 
         st.divider()
 
-        # 3. PERFORMANCE CHARTS (RUPIAH + YIELD)
-        st.subheader("📊 Performance per Bank: Revenue & Strategic Yield")
+        # 3. PERFORMANCE CHARTS
+        st.subheader("📊 Revenue Analytics & Strategic Benchmarking")
         v1, v2 = st.columns([1, 1])
         
         # Data Agregat per Bank
@@ -130,22 +130,21 @@ with tab1:
         }).reset_index().sort_values('Pendapatan_Riil', ascending=False)
 
         with v1:
-            # Grafik 1: Total Revenue per Bank (RUPIAH)
-            fig_rev = px.bar(
+            # Grafik 1: PIE CHART REVENUE (RUPIAH)
+            # Menggunakan skema warna yang cerah dan berbeda
+            fig_pie = px.pie(
                 df_bank_perf, 
-                x='Bank', 
-                y='Pendapatan_Riil',
-                title="Total Pendapatan Bunga per Bank (IDR)",
-                text_auto=',.0f',
-                color='Pendapatan_Riil',
-                color_continuous_scale='Greens'
+                values='Pendapatan_Riil', 
+                names='Bank',
+                title=f"Kontribusi Rupiah Bunga per Bank ({sel_month})",
+                hole=0.4,
+                color_discrete_sequence=px.colors.qualitative.Pastel
             )
-            fig_rev.update_traces(textposition='outside')
-            fig_rev.update_layout(showlegend=False, yaxis_title="Rupiah (Bunga)")
-            st.plotly_chart(fig_rev, use_container_width=True)
+            fig_pie.update_traces(textposition='inside', textinfo='percent+label')
+            st.plotly_chart(fig_pie, use_container_width=True)
             
         with v2:
-            # Grafik 2: Strategic Yield per Bank + Garis Benchmark
+            # Grafik 2: BAR CHART STRATEGIC YIELD
             fig_yield = go.Figure()
             fig_yield.add_trace(go.Bar(
                 x=df_bank_perf['Bank'], 
@@ -155,15 +154,17 @@ with tab1:
                 text=[f"{val:.2f}%" for val in df_bank_perf['Net_Yield']],
                 textposition='auto'
             ))
+            # Garis Benchmark
             fig_yield.add_hline(y=net_sbn, line_dash="dash", line_color="orange", 
                                 annotation_text=f"SBN Net ({net_sbn:.2f}%)")
             fig_yield.add_hline(y=net_bond, line_dash="dot", line_color="green", 
                                 annotation_text=f"{rating} Bond Net ({net_bond:.2f}%)")
-            fig_yield.update_layout(title="Strategic Yield Analysis vs Market", yaxis_title="Net Yield (%)")
+            
+            fig_yield.update_layout(title="Yield Per Bank vs Market Target", yaxis_title="Net Yield (%)")
             st.plotly_chart(fig_yield, use_container_width=True)
 
         # 4. TABEL DETAIL
-        with st.expander("📑 Detail Inventori & Spread Analysis"):
+        with st.expander("📑 Detail Inventori & Full Data Analysis"):
             df_disp = df_f.copy()
             df_disp['Jatuh_Tempo'] = df_disp['Jatuh_Tempo'].apply(lambda x: x.strftime('%d-%m-%Y') if pd.notnull(x) else '-')
             st.dataframe(df_disp.style.format({
@@ -175,5 +176,5 @@ with tab1:
 
 with tab2:
     if not df_l_raw.empty:
-        st.subheader("Lending & ALM Summary")
+        st.subheader("Monitoring Penyaluran Dana (Anak Usaha)")
         st.dataframe(df_l_raw, use_container_width=True)
