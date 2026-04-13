@@ -3,5 +3,7 @@ pandas
 yfinance
 openpyxl
 plotly
-matplotlib
 pytz
+st-gsheets-connection
+streamlit-lottie
+requests
