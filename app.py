@@ -26,7 +26,7 @@ if not st.session_state.initialized:
     with st.container():
         st.markdown("<br><br>", unsafe_allow_html=True)
         if lottie_ship: st_lottie(lottie_ship, height=300)
-        st.markdown("<h2 style='text-align: center;'>Menyinkronkan Dashboard Treasury ASDP...</h2>", unsafe_allow_html=True)
+        st.markdown("<h2 style='text-align: center;'>Sinkronisasi Data Desimal ASDP...</h2>", unsafe_allow_html=True)
         bar = st.progress(0)
         for i in range(100):
             time.sleep(0.01)
@@ -34,9 +34,16 @@ if not st.session_state.initialized:
         st.session_state.initialized = True
         st.rerun()
 
-# --- DATA ENGINE (SUPER ROBUST) ---
+# --- DATA ENGINE (FIX DESIMAL KOMA) ---
 def clean_numeric(series):
-    return pd.to_numeric(series.astype(str).str.replace('%', '').str.replace(',', '').str.replace('Rp', '').str.strip(), errors='coerce').fillna(0)
+    # 1. Ubah ke string & hapus spasi
+    s = series.astype(str).str.strip()
+    # 2. Hapus Rp, %, dan spasi di dalam
+    s = s.str.replace('Rp', '', regex=False).str.replace('%', '', regex=False).str.replace(' ', '', regex=False)
+    # 3. KUNCI: Ubah koma jadi titik (agar 5,50 jadi 5.50)
+    s = s.str.replace(',', '.', regex=False)
+    # 4. Ubah ke angka
+    return pd.to_numeric(s, errors='coerce').fillna(0)
 
 @st.cache_data(ttl=60)
 def load_data_robust():
@@ -59,77 +66,58 @@ def load_data_robust():
 # EXECUTION
 df_f_raw, df_l_raw, error_msg = load_data_robust()
 
-# --- SIDEBAR (THE SMART PART) ---
+# --- SIDEBAR & SIMULATION ---
 st.sidebar.image("https://www.indonesiaferry.co.id/img/logo.png", width=150)
 if error_msg:
-    st.error(f"⚠️ Masalah GSheets: {error_msg}")
+    st.error(f"⚠️ Error: {error_msg}")
     st.stop()
 
-# 1. Filter Periode
 all_periods = sorted(list(set(df_f_raw['Periode'].unique()) | set(df_l_raw['Periode'].unique())), reverse=True)
 selected_month = st.sidebar.selectbox("Pilih Periode Analisis:", all_periods)
 
-# 2. Market Intelligence (Live SBN)
+# Market Intel
 try: sbn_val = round(float(yf.Ticker("ID10Y=F").history(period="1d")['Close'].iloc[-1]), 2)
 except: sbn_val = 6.65
 st.sidebar.markdown("---")
-st.sidebar.header("⚙️ Market Intelligence")
 current_sbn = st.sidebar.number_input("Benchmark SBN 10Y (%)", value=sbn_val, step=0.01)
 
-# 3. Credit Risk Simulation
-st.sidebar.markdown("---")
-st.sidebar.header("🛡️ Credit Risk Simulation")
+# Simulation
+st.sidebar.header("🛡️ Credit Simulation")
 rating = st.sidebar.selectbox("Simulasi Rating Obligasi:", ["AAA", "AA+", "AA", "A"])
-risk_spread = {"AAA": 0.8, "AA+": 1.0, "AA": 1.2, "A": 2.6} # Spread dalam persen
+risk_spread = {"AAA": 0.8, "AA+": 1.0, "AA": 1.2, "A": 2.6}
 est_yield_bond = current_sbn + risk_spread[rating]
+st.sidebar.info(f"Est. Yield {rating}: **{est_yield_bond:.2f}%**")
 
-st.sidebar.info(f"Est. Yield {rating}: **{est_yield_bond:.2f}%**\n(Spread: {risk_spread[rating]}% over SBN)")
-
-# Filter Data Berdasarkan Bulan
 df_f = df_f_raw[df_f_raw['Periode'] == selected_month].copy()
 df_l = df_l_raw[df_l_raw['Periode'] == selected_month].copy()
 
 # --- DASHBOARD UI ---
 st.title(f"🚢 ASDP Treasury Dashboard")
-st.caption(f"Periode Analisis: {selected_month}")
-
 tab1, tab2, tab3 = st.tabs(["💰 Funding Monitor", "📈 Lending Schedule", "📊 ALM & Market Intel"])
 
-# ==========================================
-# WS 1: FUNDING
-# ==========================================
 with tab1:
     st.header("Monitoring Penempatan Dana")
     if not df_f.empty:
         df_f['Net_Yield'] = df_f['Rate (%)'] * 0.8
         net_sbn = current_sbn * 0.9
-        df_f['Gap_vs_SBN'] = net_sbn - df_f['Net_Yield']
         
         m1, m2, m3 = st.columns(3)
         m1.metric("Total Placement", f"Rp {df_f['Nominal'].sum():,.0f}")
         m2.metric("SBN 10Y Net", f"{net_sbn:.2f}%")
         
-        df_pindah = df_f[df_f['Gap_vs_SBN'] > 0.5]
-        pot_gain = (df_pindah['Nominal'] * (df_pindah['Gap_vs_SBN']/100)).sum()
-        m3.metric("Potensi Gain Optimisasi", f"Rp {pot_gain:,.0f}", delta=f"{len(df_pindah)} Bilyet Low-Yield", delta_color="inverse")
+        df_pindah = df_f[df_f['Net_Yield'] < net_sbn]
+        m3.metric("Bilyet Underperform", f"{len(df_pindah)} Bilyet", delta_color="inverse")
 
-        st.markdown("### Detail Penempatan Bilyet")
         st.dataframe(df_f, use_container_width=True)
         
-        col_chart1, col_chart2 = st.columns(2)
-        with col_chart1:
-            fig_f = px.bar(df_f, x='Nomor_Bilyet', y='Net_Yield', color='Bank', title="Yield vs SBN Benchmark", text_auto='.2f')
-            fig_f.add_hline(y=net_sbn, line_dash="dash", line_color="red", annotation_text="SBN Net")
-            st.plotly_chart(fig_f, use_container_width=True)
-        with col_chart2:
-            fig_pie = px.pie(df_f, values='Nominal', names='Bank', hole=0.4, title="Konsentrasi Bank")
-            st.plotly_chart(fig_pie, use_container_width=True)
-    else:
-        st.info(f"Data Funding tidak ditemukan untuk periode {selected_month}")
+        c1, c2 = st.columns(2)
+        with c1:
+            fig = px.bar(df_f, x='Nomor_Bilyet', y='Net_Yield', color='Bank', title="Yield vs SBN", text_auto='.2f')
+            fig.add_hline(y=net_sbn, line_dash="dash", line_color="red")
+            st.plotly_chart(fig, use_container_width=True)
+        with c2:
+            st.plotly_chart(px.pie(df_f, values='Nominal', names='Bank', hole=0.4, title="Konsentrasi Dana"), use_container_width=True)
 
-# ==========================================
-# WS 2: LENDING
-# ==========================================
 with tab2:
     st.header("Jadwal Angsuran Pokok & Bunga")
     if not df_l.empty:
@@ -142,48 +130,29 @@ with tab2:
         l2.metric("Penerimaan Pokok", f"Rp {inf_p:,.0f}")
         
         st.dataframe(df_l, use_container_width=True)
-        fig_l = px.bar(df_l, x='Debitur', y='Nominal', color='Tipe', barmode='group', title="Inflow Bulanan")
-        st.plotly_chart(fig_l, use_container_width=True)
-    else:
-        st.info(f"Data Lending tidak ditemukan untuk periode {selected_month}")
+        st.plotly_chart(px.bar(df_l, x='Debitur', y='Nominal', color='Tipe', barmode='group'), use_container_width=True)
 
-# ==========================================
-# WS 3: ALM & MARKET INTELLIGENCE
-# ==========================================
 with tab3:
-    st.header("ALM Resume & Market Intelligence")
-    
-    # 1. Baris Metrik ALM
+    st.header("ALM & Market Intelligence")
     total_in = df_l['Nominal'].sum() if not df_l.empty else 0
-    total_out = total_in * 0.9 # Simulasi kewajiban bank
+    total_out = total_in * 0.9
     
     r1, r2, r3 = st.columns(3)
-    r1.metric("Cash Inflow (Piutang)", f"Rp {total_in:,.0f}")
+    r1.metric("Cash Inflow", f"Rp {total_in:,.0f}")
     r2.metric("Cash Outflow (Est)", f"Rp {total_out:,.0f}")
-    
-    coverage = total_in / total_out if total_out > 0 else 0
-    r3.metric("Coverage Ratio", f"{coverage:.2f}x", delta=f"Rp {total_in - total_out:,.0f} Surplus")
+    r3.metric("Coverage", f"{total_in/total_out:.2f}x" if total_out > 0 else "0x")
     
     st.divider()
-
-    # 2. Market Intelligence Section
-    col_intel1, col_intel2 = st.columns([2, 1])
+    st.subheader("🎯 Strategi Re-Investasi")
+    st.markdown(f"""
+    | Instrumen | Est. Yield (Net) | Perbandingan |
+    | :--- | :--- | :--- |
+    | **SBN 10Y** | {current_sbn*0.9:.2f}% | Benchmark Utama |
+    | **Obligasi {rating}** | {est_yield_bond*0.9:.2f}% | Potensi Re-Investasi |
+    | **Deposito Avg** | {(df_f['Rate (%)'].mean()*0.8) if not df_f.empty else 0:.2f}% | Kondisi Eksisting |
+    """)
     
-    with col_intel1:
-        st.subheader("🎯 Strategi Re-Investasi")
-        st.write(f"Berdasarkan simulasi rating **{rating}**, berikut potensi return jika dana dipindahkan:")
-        
-        st.markdown(f"""
-        | Instrumen | Est. Yield (Gross) | Pajak | Est. Yield (Net) |
-        | :--- | :--- | :--- | :--- |
-        | **SBN 10Y (Benchmark)** | {current_sbn}% | 10% | **{current_sbn*0.9:.2f}%** |
-        | **Obligasi {rating}** | {est_yield_bond:.2f}% | 10% | **{est_yield_bond*0.9:.2f}%** |
-        | **Deposito Rata-rata** | {df_f['Rate (%)'].mean() if not df_f.empty else 0:.2f}% | 20% | **{(df_f['Rate (%)'].mean()*0.8) if not df_f.empty else 0:.2f}%** |
-        """)
-        
-    with col_intel2:
-        st.subheader("🔗 External Peek")
-        st.link_button("📈 Bareksa Bond Fund", "https://www.bareksa.com/id/data/mutualfund/5052/sucorinvest-phei-aaa-corporate-bond-fund")
-        st.link_button("📊 CEIC Yield Tenor", "https://www.ceicdata.com/en/indonesia/pt-penilai-harga-efek-indonesia-corporate-bond-yield-by-tenor")
-        st.link_button("🔍 PHEI Fair Value", "https://www.phei.co.id/Data-Pasar/Ringkasan-Pasar")
-        st.caption("Klik tombol di atas untuk verifikasi market data secara real-time.")
+    st.write("🔗 **Market Peek:**")
+    m1, m2, m3 = st.columns(3)
+    m1.link_button("📈 Bareksa Bond Fund", "https://www.bareksa.com/id/data/mutualfund/5052/sucorinvest-phei-aaa-corporate-bond-fund")
+    m2.link_button("📊 CEIC Yield", "https://www.ceicdata.com/en/indonesia/pt-penilai-harga-efek-indonesia-corporate-bond-yield-by-tenor")
