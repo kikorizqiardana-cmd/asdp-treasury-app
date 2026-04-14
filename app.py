@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 # --- 1. KONFIGURASI HALAMAN ---
 st.set_page_config(page_title="ASDP ALM Strategic Command", layout="wide", page_icon="🚢")
 
-# --- 2. ENGINE DATA (ROBUST & ANTI-ERROR) ---
+# --- 2. ENGINE DATA (ANTI-ERROR & ROBUST) ---
 def clean_numeric_robust(series):
     def process_val(val):
         val = str(val).strip().replace('Rp', '').replace('%', '').replace(' ', '').replace(',', '')
@@ -43,10 +43,11 @@ def load_gsheets_data():
 def get_market_history():
     try:
         data = yf.Ticker("ID10Y=F").history(period="6mo")
-        if not data.empty: return data[['Close']].rename(columns={'Close': 'SBN_10Y'})
+        if not data.empty: 
+            return data[['Close']].rename(columns={'Close': 'SBN_10Y'}).copy()
     except: pass
     dates = pd.date_range(end=datetime.now(), periods=180)
-    return pd.DataFrame({'SBN_10Y': np.linspace(6.5, 6.8, 180)}, index=dates)
+    return pd.DataFrame({'SBN_10Y': np.linspace(6.5, 6.8, 180)}, index=dates).copy()
 
 # --- 3. SIDEBAR ---
 logo_path = "ferry.png"
@@ -61,8 +62,10 @@ df_f = df_f_raw[df_f_raw['Periode'] == sel_month].copy()
 df_l = df_l_raw[df_l_raw['Periode'] == sel_month].copy()
 
 st.sidebar.header("⚙️ Market Intelligence")
-hist_data = get_market_history()
-sbn_val = st.sidebar.number_input("SBN 10Y Benchmark (Live)", value=round(float(hist_data['SBN_10Y'].iloc[-1]), 2), step=0.01)
+# Tarik data asli dan buat salinan baru
+raw_market_data = get_market_history()
+current_sbn_live = float(raw_market_data['SBN_10Y'].iloc[-1])
+sbn_val = st.sidebar.number_input("SBN 10Y Benchmark (Live)", value=round(current_sbn_live, 2), step=0.01)
 
 st.sidebar.markdown("---")
 st.sidebar.header("📊 Market Benchmarks")
@@ -73,7 +76,6 @@ col_s1, col_s2 = st.sidebar.columns(2)
 with col_s1: st.link_button("🌐 Bareksa", "https://www.bareksa.com/id/data", use_container_width=True)
 with col_s2: st.link_button("📉 PHEI", "https://www.phei.co.id/Data/Informasi-Efek", use_container_width=True)
 
-# DROPDOWN RATING
 rating = st.sidebar.selectbox("Pilih Rating Reinvestasi:", ["AAA", "AA+", "AA", "A", "BBB"])
 spread_map = {"AAA": 80, "AA+": 110, "AA": 140, "A": 260, "BBB": 480}
 target_bond_net = (sbn_val + (spread_map[rating]/100)) * 0.9
@@ -83,7 +85,7 @@ st.title(f"🚢 ASDP Treasury & ALM Master Command Center")
 tab1, tab2, tab3 = st.tabs(["💰 Modul 1: Funding", "📈 Modul 2: Lending", "📊 Modul 3: ALM Resume"])
 
 # ==========================================
-# TAB 1: FUNDING (TYPO FIX: PENDAPATAN_RIIL)
+# TAB 1: FUNDING (LAYOUT WHATSAPP LOCKED)
 # ==========================================
 with tab1:
     if not df_f.empty:
@@ -123,14 +125,13 @@ with tab1:
         st.divider()
         v1, v2 = st.columns([1.2, 1])
         with v1: 
-            # FIX: y='Pendapatan_Riil' bukan 'Pendapatan_Rily'
             fig_rev = px.bar(df_f.groupby('Bank')['Pendapatan_Riil'].sum().reset_index(), 
                              x='Bank', y='Pendapatan_Riil', title="Revenue per Bank", text_auto=',.0f', color='Bank')
             st.plotly_chart(fig_rev, use_container_width=True)
         with v2: st.plotly_chart(px.pie(df_f, values='Net_Yield', names='Bank', hole=0.5, title="Net Yield Mix"), use_container_width=True)
 
 # ==========================================
-# TAB 2: LENDING (LOCKED)
+# TAB 2: LENDING (CASH OUT DEBT LOCKED)
 # ==========================================
 with tab2:
     if not df_l.empty:
@@ -149,7 +150,7 @@ with tab2:
         st.plotly_chart(px.bar(df_l.groupby('Kreditur')['Nominal'].sum().reset_index().sort_values('Nominal', ascending=False), x='Kreditur', y='Nominal', text_auto=',.0f', color='Kreditur', title="Cash Out per Bank"), use_container_width=True)
 
 # ==========================================
-# TAB 3: ALM RESUME (DYNAMIC ISSUERS FIXED)
+# TAB 3: ALM RESUME (DYNAMIC ISSUERS & FIX KEYERROR)
 # ==========================================
 with tab3:
     st.header(f"📊 ALM Strategic Intelligence - {sel_month}")
@@ -167,7 +168,6 @@ with tab3:
         # DYNAMIC RECO MAPPING
         st.subheader(f"💡 Strategic Picks for Rating: {rating}")
         rec1, rec2 = st.columns(2)
-        
         with rec1:
             st.markdown("### 🇮🇩 Top 3 SBN Benchmark")
             sbn_data = {"Seri": ["FR0101 (10Y)", "FR0100 (9Y)", "FR0098 (20Y)"], "Indikasi Yield": [f"{sbn_val:.2f}%", f"{(sbn_val-0.15):.2f}%", f"{(sbn_val+0.35):.2f}%"]}
@@ -175,7 +175,6 @@ with tab3:
 
         with rec2:
             st.markdown(f"### 🏢 Top 3 Corp Bond/Sukuk ({rating})")
-            # Logic Pemilihan Issuer Otomatis
             issuer_map = {
                 "AAA": {"Issuer": ["Bank Mandiri", "Telkom Indonesia", "Bank BRI"], "Inst": ["Obligasi", "Sukuk", "Obligasi"]},
                 "AA+": {"Issuer": ["Astra Intl", "BCA", "Indosat"], "Inst": ["Obligasi", "Obligasi", "Sukuk"]},
@@ -183,21 +182,20 @@ with tab3:
                 "A": {"Issuer": ["Japfa Comfeed", "Gajah Tunggal", "Alam Sutera"], "Inst": ["Obligasi", "Obligasi", "MTN"]},
                 "BBB": {"Issuer": ["Lippo Karawaci", "Agung Podomoro", "Modernland"], "Inst": ["High Yield", "Obligasi", "MTN"]}
             }
-            # Ambil data sesuai rating
             picks = issuer_map.get(rating, issuer_map["AAA"])
-            
-            corp_data = {
-                "Issuer": picks["Issuer"],
-                "Instrumen": picks["Inst"],
-                "Yield": [f"{(sbn_val + spread_map[rating]/100):.2f}%", f"{(sbn_val + spread_map[rating]/100 - 0.1):.2f}%", f"{(sbn_val + spread_map[rating]/100 + 0.15):.2f}%"]
-            }
+            corp_data = {"Issuer": picks["Issuer"], "Instrumen": picks["Inst"], "Yield": [f"{(sbn_val + spread_map[rating]/100):.2f}%", f"{(sbn_val + spread_map[rating]/100 - 0.1):.2f}%", f"{(sbn_val + spread_map[rating]/100 + 0.15):.2f}%"]}
             st.table(pd.DataFrame(corp_data))
 
         st.divider()
-        hist_data['Bareksa'] = hist_data['SBN_10Y'] * (bareksa_val / sbn_val)
-        hist_data['PHEI_Bond'] = hist_data['SBN_10Y'] * (criec_val / sbn_val)
+        # FIX KEYERROR: Kita buat salinan dataframe market khusus untuk grafik
+        plot_market = raw_market_data.copy()
+        plot_market['Bareksa'] = plot_market['SBN_10Y'] * (bareksa_val / (sbn_val if sbn_val != 0 else 1))
+        plot_market['PHEI_Bond'] = plot_market['SBN_10Y'] * (criec_val / (sbn_val if sbn_val != 0 else 1))
+        
         fig_h = go.Figure()
-        fig_h.add_trace(go.Scatter(x=hist_data.index, y=hist_data['SBN_10Y'], name='SBN 10Y'))
-        fig_h.add_trace(go.Scatter(x=hist_data.index, y=hist_data['Bareksa'], name='Bareksa MM', line=dict(dash='dot')))
-        fig_h.add_trace(go.Scatter(x=hist_data.index, y=hist_data['PHEI_Bond'], name='PHEI Bond', width=3))
+        fig_h.add_trace(go.Scatter(x=plot_market.index, y=plot_market['SBN_10Y'], name='SBN 10Y'))
+        fig_h.add_trace(go.Scatter(x=plot_market.index, y=plot_market['Bareksa'], name='Bareksa MM', line=dict(dash='dot')))
+        fig_h.add_trace(go.Scatter(x=plot_market.index, y=plot_market['PHEI_Bond'], name='PHEI Bond Index', line=dict(width=3)))
+        
+        fig_h.update_layout(title="Historical Market Trends Comparison", yaxis_title="Yield (%)")
         st.plotly_chart(fig_h, use_container_width=True)
