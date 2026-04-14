@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 # --- 1. KONFIGURASI HALAMAN ---
 st.set_page_config(page_title="ASDP ALM Strategic Command", layout="wide", page_icon="🚢")
 
-# --- 2. ENGINE DATA (ANTI-ERROR) ---
+# --- 2. ENGINE DATA (ROBUST & ANTI-ERROR) ---
 def clean_numeric_robust(series):
     def process_val(val):
         val = str(val).strip().replace('Rp', '').replace('%', '').replace(' ', '').replace(',', '')
@@ -83,7 +83,7 @@ st.title(f"🚢 ASDP Treasury & ALM Master Command Center")
 tab1, tab2, tab3 = st.tabs(["💰 Modul 1: Funding", "📈 Modul 2: Lending", "📊 Modul 3: ALM Resume"])
 
 # ==========================================
-# TAB 1: FUNDING (LAYOUT WHATSAPP LOCKED)
+# TAB 1: FUNDING (TYPO FIX: PENDAPATAN_RIIL)
 # ==========================================
 with tab1:
     if not df_f.empty:
@@ -91,14 +91,17 @@ with tab1:
         df_f['Pendapatan_Riil'] = (df_f['Nominal'] * (df_f['Rate'] / 100)) / 12
         net_sbn = sbn_val * 0.9
         total_rev = df_f['Pendapatan_Riil'].sum()
+
         m1, m2, m3 = st.columns(3)
         m1.metric("Total Placement", f"Rp {df_f['Nominal'].sum():,.0f}")
         m2.metric(f"Total Revenue ({sel_month})", f"Rp {total_rev:,.0f}")
         m3.metric("SBN Net Benchmark", f"{net_sbn:.2f}%")
+
         p1, p2, p3 = st.columns(3)
         p1.metric("Potensi Tambahan (SBN)", f"Rp {(df_f['Nominal'] * (net_sbn/100) / 12).sum() - total_rev:,.0f}")
         p2.metric(f"Potensi Tambahan ({rating})", f"Rp {(df_f['Nominal'] * (target_bond_net/100) / 12).sum() - total_rev:,.0f}")
         p3.metric(f"Target Yield {rating} (Net)", f"{target_bond_net:.2f}%")
+
         st.divider()
         c_al1, c_al2 = st.columns(2)
         with c_al1:
@@ -116,13 +119,18 @@ with tab1:
                 if not df_soon.empty:
                     for _, row in df_soon.iterrows(): st.warning(f"**{row['Bank']}** | `{row['Jatuh_Tempo'].strftime('%d-%m-%Y')}`")
                 else: st.info("Aman.")
+
         st.divider()
         v1, v2 = st.columns([1.2, 1])
-        with v1: st.plotly_chart(px.bar(df_f.groupby('Bank')['Pendapatan_Riil'].sum().reset_index(), x='Bank', y='Pendapatan_Rily', title="Revenue per Bank", text_auto=',.0f', color='Bank'), use_container_width=True)
+        with v1: 
+            # FIX: y='Pendapatan_Riil' bukan 'Pendapatan_Rily'
+            fig_rev = px.bar(df_f.groupby('Bank')['Pendapatan_Riil'].sum().reset_index(), 
+                             x='Bank', y='Pendapatan_Riil', title="Revenue per Bank", text_auto=',.0f', color='Bank')
+            st.plotly_chart(fig_rev, use_container_width=True)
         with v2: st.plotly_chart(px.pie(df_f, values='Net_Yield', names='Bank', hole=0.5, title="Net Yield Mix"), use_container_width=True)
 
 # ==========================================
-# TAB 2: LENDING (CASH OUT DEBT LOCKED)
+# TAB 2: LENDING (LOCKED)
 # ==========================================
 with tab2:
     if not df_l.empty:
@@ -141,7 +149,7 @@ with tab2:
         st.plotly_chart(px.bar(df_l.groupby('Kreditur')['Nominal'].sum().reset_index().sort_values('Nominal', ascending=False), x='Kreditur', y='Nominal', text_auto=',.0f', color='Kreditur', title="Cash Out per Bank"), use_container_width=True)
 
 # ==========================================
-# TAB 3: ALM RESUME (DYNAMIC RECOMMENDATIONS)
+# TAB 3: ALM RESUME (DYNAMIC ISSUERS FIXED)
 # ==========================================
 with tab3:
     st.header(f"📊 ALM Strategic Intelligence - {sel_month}")
@@ -151,66 +159,41 @@ with tab3:
         icr = inflow_b / outflow_val if outflow_val > 0 else 0
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Interest Revenue", f"Rp {inflow_b:,.0f}")
-        c2.metric("Cash Out Debt", f"Rp {outflow_val:,.0f}")
+        c2.metric("Total Cash Out Debt", f"Rp {outflow_val:,.0f}")
         c3.metric("Net Interest Margin", f"Rp {inflow_b - outflow_val:,.0f}")
         c4.metric("ICR Strength", f"{icr:.2f}x")
         st.divider()
 
-        # --- DYNAMIC RECOMMENDATIONS MAPPING ---
+        # DYNAMIC RECO MAPPING
         st.subheader(f"💡 Strategic Picks for Rating: {rating}")
         rec1, rec2 = st.columns(2)
         
         with rec1:
             st.markdown("### 🇮🇩 Top 3 SBN Benchmark")
-            sbn_data = {
-                "Seri": ["FR0101 (10Y)", "FR0100 (9Y)", "FR0098 (20Y)"],
-                "Indikasi Yield": [f"{sbn_val:.2f}%", f"{(sbn_val-0.15):.2f}%", f"{(sbn_val+0.35):.2f}%"]
-            }
+            sbn_data = {"Seri": ["FR0101 (10Y)", "FR0100 (9Y)", "FR0098 (20Y)"], "Indikasi Yield": [f"{sbn_val:.2f}%", f"{(sbn_val-0.15):.2f}%", f"{(sbn_val+0.35):.2f}%"]}
             st.table(pd.DataFrame(sbn_data))
 
         with rec2:
             st.markdown(f"### 🏢 Top 3 Corp Bond/Sukuk ({rating})")
-            
-            # Logika Pemilihan Issuer Berdasarkan Rating
+            # Logic Pemilihan Issuer Otomatis
             issuer_map = {
-                "AAA": {
-                    "Issuer": ["Bank Mandiri", "Telkom Indonesia", "Bank BRI"],
-                    "Inst": ["Obligasi Berkelanjutan", "Sukuk Ijarah", "Obligasi Subordinasi"]
-                },
-                "AA+": {
-                    "Issuer": ["Astra International", "BCA", "Indosat Ooredoo"],
-                    "Inst": ["Obligasi Korporasi", "Obligasi Subordinasi", "Sukuk Mudharabah"]
-                },
-                "AA": {
-                    "Issuer": ["Adaro Energy", "United Tractors", "Semen Indonesia"],
-                    "Inst": ["Obligasi Berkelanjutan", "Obligasi Korporasi", "Sukuk Ijarah"]
-                },
-                "A": {
-                    "Issuer": ["Japfa Comfeed", "Gajah Tunggal", "Alam Sutera"],
-                    "Inst": ["Obligasi Korporasi", "Obligasi Berkelanjutan", "MTN"]
-                },
-                "BBB": {
-                    "Issuer": ["Lippo Karawaci", "Agung Podomoro", "Modernland"],
-                    "Inst": ["High Yield Bond", "Obligasi Korporasi", "MTN"]
-                }
+                "AAA": {"Issuer": ["Bank Mandiri", "Telkom Indonesia", "Bank BRI"], "Inst": ["Obligasi", "Sukuk", "Obligasi"]},
+                "AA+": {"Issuer": ["Astra Intl", "BCA", "Indosat"], "Inst": ["Obligasi", "Obligasi", "Sukuk"]},
+                "AA": {"Issuer": ["Adaro Energy", "United Tractors", "Semen Indo"], "Inst": ["Obligasi", "Obligasi", "Sukuk"]},
+                "A": {"Issuer": ["Japfa Comfeed", "Gajah Tunggal", "Alam Sutera"], "Inst": ["Obligasi", "Obligasi", "MTN"]},
+                "BBB": {"Issuer": ["Lippo Karawaci", "Agung Podomoro", "Modernland"], "Inst": ["High Yield", "Obligasi", "MTN"]}
             }
-            
-            # Ambil data sesuai rating (default AAA jika tidak ada di map)
-            current_picks = issuer_map.get(rating, issuer_map["AAA"])
+            # Ambil data sesuai rating
+            picks = issuer_map.get(rating, issuer_map["AAA"])
             
             corp_data = {
-                "Issuer": current_picks["Issuer"],
-                "Instrumen": current_picks["Inst"],
-                "Yield": [
-                    f"{(sbn_val + spread_map[rating]/100):.2f}%", 
-                    f"{(sbn_val + spread_map[rating]/100 - 0.1):.2f}%", 
-                    f"{(sbn_val + spread_map[rating]/100 + 0.15):.2f}%"
-                ]
+                "Issuer": picks["Issuer"],
+                "Instrumen": picks["Inst"],
+                "Yield": [f"{(sbn_val + spread_map[rating]/100):.2f}%", f"{(sbn_val + spread_map[rating]/100 - 0.1):.2f}%", f"{(sbn_val + spread_map[rating]/100 + 0.15):.2f}%"]
             }
             st.table(pd.DataFrame(corp_data))
 
         st.divider()
-        # TREND MARKET
         hist_data['Bareksa'] = hist_data['SBN_10Y'] * (bareksa_val / sbn_val)
         hist_data['PHEI_Bond'] = hist_data['SBN_10Y'] * (criec_val / sbn_val)
         fig_h = go.Figure()
