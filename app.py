@@ -73,7 +73,8 @@ col_s1, col_s2 = st.sidebar.columns(2)
 with col_s1: st.link_button("🌐 Bareksa", "https://www.bareksa.com/id/data", use_container_width=True)
 with col_s2: st.link_button("📉 PHEI", "https://www.phei.co.id/Data/Informasi-Efek", use_container_width=True)
 
-rating = st.sidebar.selectbox("Rating Reinvestasi:", ["AAA", "AA+", "AA", "A", "BBB"])
+# DROPDOWN RATING
+rating = st.sidebar.selectbox("Pilih Rating Reinvestasi:", ["AAA", "AA+", "AA", "A", "BBB"])
 spread_map = {"AAA": 80, "AA+": 110, "AA": 140, "A": 260, "BBB": 480}
 target_bond_net = (sbn_val + (spread_map[rating]/100)) * 0.9
 
@@ -90,17 +91,14 @@ with tab1:
         df_f['Pendapatan_Riil'] = (df_f['Nominal'] * (df_f['Rate'] / 100)) / 12
         net_sbn = sbn_val * 0.9
         total_rev = df_f['Pendapatan_Riil'].sum()
-
         m1, m2, m3 = st.columns(3)
         m1.metric("Total Placement", f"Rp {df_f['Nominal'].sum():,.0f}")
         m2.metric(f"Total Revenue ({sel_month})", f"Rp {total_rev:,.0f}")
         m3.metric("SBN Net Benchmark", f"{net_sbn:.2f}%")
-
         p1, p2, p3 = st.columns(3)
         p1.metric("Potensi Tambahan (SBN)", f"Rp {(df_f['Nominal'] * (net_sbn/100) / 12).sum() - total_rev:,.0f}")
         p2.metric(f"Potensi Tambahan ({rating})", f"Rp {(df_f['Nominal'] * (target_bond_net/100) / 12).sum() - total_rev:,.0f}")
         p3.metric(f"Target Yield {rating} (Net)", f"{target_bond_net:.2f}%")
-
         st.divider()
         c_al1, c_al2 = st.columns(2)
         with c_al1:
@@ -118,10 +116,9 @@ with tab1:
                 if not df_soon.empty:
                     for _, row in df_soon.iterrows(): st.warning(f"**{row['Bank']}** | `{row['Jatuh_Tempo'].strftime('%d-%m-%Y')}`")
                 else: st.info("Aman.")
-
         st.divider()
         v1, v2 = st.columns([1.2, 1])
-        with v1: st.plotly_chart(px.bar(df_f.groupby('Bank')['Pendapatan_Riil'].sum().reset_index(), x='Bank', y='Pendapatan_Riil', title="Revenue per Bank", text_auto=',.0f', color='Bank'), use_container_width=True)
+        with v1: st.plotly_chart(px.bar(df_f.groupby('Bank')['Pendapatan_Riil'].sum().reset_index(), x='Bank', y='Pendapatan_Rily', title="Revenue per Bank", text_auto=',.0f', color='Bank'), use_container_width=True)
         with v2: st.plotly_chart(px.pie(df_f, values='Net_Yield', names='Bank', hole=0.5, title="Net Yield Mix"), use_container_width=True)
 
 # ==========================================
@@ -144,75 +141,80 @@ with tab2:
         st.plotly_chart(px.bar(df_l.groupby('Kreditur')['Nominal'].sum().reset_index().sort_values('Nominal', ascending=False), x='Kreditur', y='Nominal', text_auto=',.0f', color='Kreditur', title="Cash Out per Bank"), use_container_width=True)
 
 # ==========================================
-# TAB 3: ALM RESUME (RECOMMENDATIONS ADDED)
+# TAB 3: ALM RESUME (DYNAMIC RECOMMENDATIONS)
 # ==========================================
 with tab3:
-    st.header(f"📊 ALM Strategic & Market Recommendations - {sel_month}")
+    st.header(f"📊 ALM Strategic Intelligence - {sel_month}")
     if not df_f.empty and not df_l.empty:
         inflow_b = df_f['Pendapatan_Riil'].sum()
         outflow_val = df_l['Nominal'].sum()
         icr = inflow_b / outflow_val if outflow_val > 0 else 0
-
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Interest Revenue", f"Rp {inflow_b:,.0f}")
         c2.metric("Cash Out Debt", f"Rp {outflow_val:,.0f}")
         c3.metric("Net Interest Margin", f"Rp {inflow_b - outflow_val:,.0f}")
         c4.metric("ICR Strength", f"{icr:.2f}x")
-
         st.divider()
 
-        # --- NEW SECTION: MARKET RECOMMENDATIONS ---
-        st.subheader("💡 Strategic Reinvestment Recommendations (Top 3 Picks)")
+        # --- DYNAMIC RECOMMENDATIONS MAPPING ---
+        st.subheader(f"💡 Strategic Picks for Rating: {rating}")
         rec1, rec2 = st.columns(2)
         
         with rec1:
-            st.markdown("### 🇮🇩 Top 3 SBN Benchmark (Live)")
-            # Data simulasi benchmark SBN 10Y per 2026
+            st.markdown("### 🇮🇩 Top 3 SBN Benchmark")
             sbn_data = {
-                "Seri": ["FR0101 (Benchmark)", "FR0100", "FR0097"],
-                "Tenor": ["10 Year", "9 Year", "7 Year"],
-                "Est. Yield": [f"{sbn_val:.2f}%", f"{(sbn_val-0.12):.2f}%", f"{(sbn_val-0.25):.2f}%"]
+                "Seri": ["FR0101 (10Y)", "FR0100 (9Y)", "FR0098 (20Y)"],
+                "Indikasi Yield": [f"{sbn_val:.2f}%", f"{(sbn_val-0.15):.2f}%", f"{(sbn_val+0.35):.2f}%"]
             }
             st.table(pd.DataFrame(sbn_data))
-            st.caption("Sumber: Bareksa / DJPPR Market Pulse")
 
         with rec2:
-            st.markdown(f"### 🏢 Top 3 Corporate Bond/Sukuk ({rating})")
-            # Data simulasi korporasi top-tier sesuai rating yang dipilih
+            st.markdown(f"### 🏢 Top 3 Corp Bond/Sukuk ({rating})")
+            
+            # Logika Pemilihan Issuer Berdasarkan Rating
+            issuer_map = {
+                "AAA": {
+                    "Issuer": ["Bank Mandiri", "Telkom Indonesia", "Bank BRI"],
+                    "Inst": ["Obligasi Berkelanjutan", "Sukuk Ijarah", "Obligasi Subordinasi"]
+                },
+                "AA+": {
+                    "Issuer": ["Astra International", "BCA", "Indosat Ooredoo"],
+                    "Inst": ["Obligasi Korporasi", "Obligasi Subordinasi", "Sukuk Mudharabah"]
+                },
+                "AA": {
+                    "Issuer": ["Adaro Energy", "United Tractors", "Semen Indonesia"],
+                    "Inst": ["Obligasi Berkelanjutan", "Obligasi Korporasi", "Sukuk Ijarah"]
+                },
+                "A": {
+                    "Issuer": ["Japfa Comfeed", "Gajah Tunggal", "Alam Sutera"],
+                    "Inst": ["Obligasi Korporasi", "Obligasi Berkelanjutan", "MTN"]
+                },
+                "BBB": {
+                    "Issuer": ["Lippo Karawaci", "Agung Podomoro", "Modernland"],
+                    "Inst": ["High Yield Bond", "Obligasi Korporasi", "MTN"]
+                }
+            }
+            
+            # Ambil data sesuai rating (default AAA jika tidak ada di map)
+            current_picks = issuer_map.get(rating, issuer_map["AAA"])
+            
             corp_data = {
-                "Issuer": ["PT Bank Mandiri (Persero) Tbk", "PT Telkom Indonesia Tbk", "PT BRI (Persero) Tbk"],
-                "Instrumen": ["Obligasi Berkelanjutan", "Sukuk Ijarah", "Obligasi Subordinasi"],
-                "Indikasi Yield": [f"{(sbn_val + spread_map[rating]/100):.2f}%", f"{(sbn_val + spread_map[rating]/100 - 0.05):.2f}%", f"{(sbn_val + spread_map[rating]/100 + 0.1):.2f}%"]
+                "Issuer": current_picks["Issuer"],
+                "Instrumen": current_picks["Inst"],
+                "Yield": [
+                    f"{(sbn_val + spread_map[rating]/100):.2f}%", 
+                    f"{(sbn_val + spread_map[rating]/100 - 0.1):.2f}%", 
+                    f"{(sbn_val + spread_map[rating]/100 + 0.15):.2f}%"
+                ]
             }
             st.table(pd.DataFrame(corp_data))
-            st.caption(f"Sumber: PHEI / CRIEC {rating} Index")
 
         st.divider()
-
         # TREND MARKET
-        st.subheader("📈 Market Historical Trend Analysis")
         hist_data['Bareksa'] = hist_data['SBN_10Y'] * (bareksa_val / sbn_val)
         hist_data['PHEI_Bond'] = hist_data['SBN_10Y'] * (criec_val / sbn_val)
-        fig_hist = go.Figure()
-        fig_hist.add_trace(go.Scatter(x=hist_data.index, y=hist_data['SBN_10Y'], name='SBN 10Y (Anchor)', line=dict(color='blue')))
-        fig_hist.add_trace(go.Scatter(x=hist_data.index, y=hist_data['Bareksa'], name='Bareksa MM', line=dict(color='green', dash='dot')))
-        fig_hist.add_trace(go.Scatter(x=hist_data.index, y=hist_data['PHEI_Bond'], name='PHEI Bond Index', line=dict(color='orange', width=3)))
-        st.plotly_chart(fig_hist, use_container_width=True)
-
-        # BUTTONS & ANALYSIS
-        col_an1, col_an2 = st.columns(2)
-        with col_an1:
-            st.subheader("📝 ALM Intelligence Analysis")
-            with st.container(border=True):
-                st.write(f"1. **Yield Pick:** Seri **FR0101** merupakan benchmark 10Y paling likuid saat ini.")
-                st.write(f"2. **Corp Strategy:** Berdasarkan PHEI, emiten perbankan **AAA** menawarkan spread menarik di atas SBN.")
-                st.divider()
-                st.link_button("🚀 Pantau Bareksa Live", "https://www.bareksa.com/id/data")
-                st.link_button("📉 Pantau PHEI Bond Live", "https://www.phei.co.id/Data/Informasi-Efek")
-        
-        with col_an2:
-            st.subheader("🛡️ Risk Assessment")
-            with st.container(border=True):
-                if icr < 1.0: st.error("🚨 **CRITICAL**: Outflow hutang lebih besar dari inflow bunga!")
-                elif icr < 2.0: st.warning("⚠️ **WATCHLIST**: Risiko likuiditas sedang. Diversifikasi ke SBN disarankan.")
-                else: st.success("🛡️ **SAFE**: Posisi kas sangat kuat. Kapasitas reinvestasi tinggi.")
+        fig_h = go.Figure()
+        fig_h.add_trace(go.Scatter(x=hist_data.index, y=hist_data['SBN_10Y'], name='SBN 10Y'))
+        fig_h.add_trace(go.Scatter(x=hist_data.index, y=hist_data['Bareksa'], name='Bareksa MM', line=dict(dash='dot')))
+        fig_h.add_trace(go.Scatter(x=hist_data.index, y=hist_data['PHEI_Bond'], name='PHEI Bond', width=3))
+        st.plotly_chart(fig_h, use_container_width=True)
