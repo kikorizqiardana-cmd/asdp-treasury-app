@@ -109,7 +109,6 @@ def load_gsheets_data():
     except Exception as e:
         return pd.DataFrame(), pd.DataFrame(), f"Error Parse: {str(e)}"
 
-# ENGINE CHART: Anti badai dengan block try-except Multi-line
 @st.cache_data(ttl=3600)
 def get_market_history():
     try:
@@ -120,7 +119,6 @@ def get_market_history():
     except Exception: 
         pass
     
-    # Fallback 6 bulan jika YFinance gagal
     dates = pd.date_range(end=datetime.now(), periods=120, freq='B')
     df = pd.DataFrame(index=dates)
     df['SBN_10Y'] = np.linspace(6.4, 6.7, len(df)) + np.random.normal(0, 0.02, len(df))
@@ -165,7 +163,8 @@ sbn_val = st.sidebar.number_input("SBN 10Y Benchmark (%)", value=round(float(his
 bareksa_val = st.sidebar.number_input("Bareksa MM (%)", value=4.75, step=0.01)
 criec_val = st.sidebar.number_input("PHEI CRIEC Index (%)", value=7.20, step=0.01)
 indonia_val = st.sidebar.number_input("IndoNIA (Live %)", value=6.25, step=0.01)
-jibor_val = st.sidebar.number_input("JIBOR 1M (Live %)", value=6.60, step=0.01)
+# JIBOR SEKARANG 3M
+jibor_val = st.sidebar.number_input("JIBOR 3M (Live %)", value=6.60, step=0.01)
 
 st.sidebar.link_button("🌐 Bareksa Data", "https://www.bareksa.com/id/data", use_container_width=True)
 st.sidebar.link_button("📉 PHEI (Informasi Efek)", "https://www.phei.co.id/Data/Informasi-Efek", use_container_width=True)
@@ -342,7 +341,7 @@ with tab3:
             
         st.divider()
         
-        st.subheader("⚠️ Risk Assessment & AI Insight")
+        st.subheader("⚠️ Risk Assessment")
         cr1, cr2 = st.columns(2)
         with cr1:
             st.markdown("**1. ICR Operations Check (YtD)**")
@@ -352,7 +351,7 @@ with tab3:
                 st.warning(f"⚠️ **WARNING (ICR: {icr_val:.2f}x):** ICR cukup tipis. Pertimbangkan realokasi penempatan ke instrumen dengan yield lebih tinggi.")
             else:
                 st.success(f"✅ **SAFE (ICR: {icr_val:.2f}x):** ICR sangat sehat. Pendapatan bunga menutupi kewajiban dengan buffer yang memadai.")
-            st.markdown("[🤖 Tanya AI Assistant untuk Strategi Restrukturisasi](#)")
+            # LINK AI DIHAPUS SESUAI REQUEST
 
         with cr2:
             st.markdown("**2. Corporate Bond Reinvestment Risk**")
@@ -378,7 +377,8 @@ with tab3:
         f_alm.add_trace(go.Scatter(x=plot_df.index, y=plot_df['PHEI'], name='PHEI Bond Index (Hist)', line=dict(color='red', width=3)))
         
         f_alm.add_trace(go.Scatter(x=plot_df.index, y=[indonia_val]*len(plot_df), name=f'IndoNIA Live ({indonia_val}%)', line=dict(color='purple', dash='dash', width=2)))
-        f_alm.add_trace(go.Scatter(x=plot_df.index, y=[jibor_val]*len(plot_df), name=f'JIBOR 1M Live ({jibor_val}%)', line=dict(color='green', dash='dot', width=2)))
+        # UPDATE LABEL KE JIBOR 3M
+        f_alm.add_trace(go.Scatter(x=plot_df.index, y=[jibor_val]*len(plot_df), name=f'JIBOR 3M Live ({jibor_val}%)', line=dict(color='green', dash='dot', width=2)))
         
         f_alm.update_layout(
             hovermode="x unified",
