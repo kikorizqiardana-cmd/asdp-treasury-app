@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 # --- 1. KONFIGURASI HALAMAN ---
 st.set_page_config(page_title="ASDP ALM Strategic Command", layout="wide", page_icon="🚢")
 
-# --- 2. DATA MAPPING (LOCKED) ---
+# --- 2. DATA MAPPING (FIXED) ---
 MONTH_MAP_ID = {
     1: 'Januari', 2: 'Februari', 3: 'Maret', 4: 'April', 5: 'Mei', 6: 'Juni',
     7: 'Juli', 8: 'Agustus', 9: 'September', 10: 'Oktober', 11: 'November', 12: 'Desember'
@@ -29,7 +29,7 @@ def get_bank_logo(bank_name):
     if 'btn' in bank_name: return "https://upload.wikimedia.org/wikipedia/commons/f/fd/Bank_BTN_logo.svg"
     return "https://cdn-icons-png.flaticon.com/512/2830/2830284.png"
 
-# --- 3. ENGINE DATA (TRIPLE SHIELD) ---
+# --- 3. ENGINE DATA (ROBUST & CLEAN) ---
 def clean_numeric_robust(series):
     def process_val(val):
         if pd.isna(val): return "0"
@@ -44,38 +44,42 @@ def load_gsheets_data():
     sheet_id = "182zKZj0Kr56yqOGM_XW2W3Q6fhaOSo8z9TIbjC_JxxY"
     base_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet="
     try:
-        # Load and drop basic NaNs
-        df_f = pd.read_csv(base_url + "Funding").dropna(subset=['Periode'])
-        df_l = pd.read_csv(base_url + "Lending").dropna(subset=['Periode'])
+        df_f_raw = pd.read_csv(base_url + "Funding")
+        df_l_raw = pd.read_csv(base_url + "Lending")
         
-        # Shield 1: Strict Period Filter (Must start with a month name or digit)
-        valid_starts = list(MONTH_MAP_REV.keys())
-        df_f = df_f[df_f['Periode'].astype(str).str.split().str[0].isin(valid_starts)].copy()
-        df_l = df_l[df_l['Periode'].astype(str).str.split().str[0].isin(valid_starts)].copy()
+        # Super Strict Filtering: Hanya ambil baris yang kolom Periode punya minimal 2 kata (Bulan Tahun)
+        def is_valid_period(p):
+            p_str = str(p).strip()
+            pts = p_str.split()
+            return len(pts) >= 2 and pts[0] in MONTH_MAP_REV
+
+        df_f = df_f_raw[df_f_raw['Periode'].apply(is_valid_period)].copy()
+        df_l = df_l_raw[df_l_raw['Periode'].apply(is_valid_period)].copy()
 
         df_f.columns = [c.strip() for c in df_f.columns]
         df_l.columns = [c.strip() for c in df_l.columns]
         
-        # Smart Map Columns for Lending
+        # Mapping Kolom Lending
         l_map = {'Bank': 'Kreditur', 'Rate': 'Lending_Rate', 'Sisa Outstanding': 'Outstanding', 'Pembayaran Pokok': 'Bayar_Pokok'}
         for o, n in l_map.items():
             if o in df_l.columns and n not in df_l.columns: df_l.rename(columns={o: n}, inplace=True)
         
+        # Funding Clean
+        if 'Rate (%)' in df_f.columns: df_f.rename(columns={'Rate (%)': 'Rate'}, inplace=True)
+        if 'Bank' in df_f.columns: df_f.rename(columns={'Bank': 'Kreditur'}, inplace=True)
+        
+        # Apply Clean Numeric
         for c in ['Nominal', 'Rate']:
             if c in df_f.columns: df_f[c] = clean_numeric_robust(df_f[c])
         for c in ['Nominal', 'Lending_Rate', 'Outstanding', 'Bayar_Pokok']:
             if c in df_l.columns: df_l[c] = clean_numeric_robust(df_l[c])
             
-        # Shield 2: Try-Except Date Parser
         def safe_parse_date(p):
-            try:
-                p_str = str(p).replace('-', ' ').strip()
-                pts = p_str.split()
-                m_idx = MONTH_MAP_REV.get(pts[0], 0)
-                y_val = pts[1] if len(pts) > 1 else "2026"
-                return pd.Series([m_idx, str(y_val)])
-            except Exception:
-                return pd.Series([0, "2026"])
+            p_str = str(p).replace('-', ' ').strip()
+            pts = p_str.split()
+            m_idx = MONTH_MAP_REV.get(pts[0], 0)
+            y_val = pts[1]
+            return pd.Series([m_idx, str(y_val)])
 
         df_f[['m_idx', 'year_val']] = df_f['Periode'].apply(safe_parse_date)
         df_l[['m_idx', 'year_val']] = df_l['Periode'].apply(safe_parse_date)
@@ -144,9 +148,10 @@ with tab1:
         with v2: st.plotly_chart(px.pie(df_f, values='Nominal', names='Kreditur', hole=0.5, title="Nominal Mix"), use_container_width=True)
 
 # ==========================================
-# TAB 2: LENDING (ULTRA PRECISION)
+# TAB 2: LENDING (ULTIMATE FIX)
 # ==========================================
 with tab2:
+    # Filter Data Lending berdasarkan pilihan kalender
     df_l = df_l_raw[(df_l_raw['m_idx'] == s_m_idx) & (df_l_raw['year_val'] == s_y_val)].copy()
 
     if not df_l.empty:
@@ -182,7 +187,7 @@ with tab2:
         )
         st.plotly_chart(fig_l_bar, use_container_width=True)
     else:
-        st.warning(f"Data Lending untuk {s_m_name} {s_y_val} tidak ditemukan.")
+        st.warning(f"Data Lending untuk {s_m_name} {s_y_val} belum ada di GSheets.")
 
 # ==========================================
 # TAB 3: ALM RESUME
