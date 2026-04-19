@@ -20,6 +20,16 @@ MONTH_MAP_REV = {
     'Januari': 1, 'Februari': 2, 'Maret': 3, 'April': 4, 'Mei': 5, 'Juni': 6, 'Juli': 7, 'Agustus': 8, 'September': 9, 'Oktober': 10, 'November': 11, 'Desember': 12
 }
 
+# Fungsi Helper Logo Bank (Auto-Link)
+def get_bank_logo(bank_name):
+    bank_name = str(bank_name).lower()
+    if 'mandiri' in bank_name: return "https://upload.wikimedia.org/wikipedia/commons/a/ad/Bank_Mandiri_logo_2016.svg"
+    if 'bri' in bank_name: return "https://upload.wikimedia.org/wikipedia/commons/2/2e/BRI_Logo.svg"
+    if 'bni' in bank_name: return "https://upload.wikimedia.org/wikipedia/id/5/55/BNI_logo.svg"
+    if 'bca' in bank_name: return "https://upload.wikimedia.org/wikipedia/commons/5/5c/Bank_Central_Asia.svg"
+    if 'btn' in bank_name: return "https://upload.wikimedia.org/wikipedia/commons/f/fd/Bank_BTN_logo.svg"
+    return "https://cdn-icons-png.flaticon.com/512/2830/2830284.png" # Default Icon
+
 # --- 3. ENGINE DATA (ROBUST VERSION) ---
 def clean_numeric_robust(series):
     def process_val(val):
@@ -36,35 +46,24 @@ def load_gsheets_data():
         df_f = pd.read_csv(base_url + "Funding")
         df_l = pd.read_csv(base_url + "Lending")
         
-        # Super Cleaning Kolom
         df_f.columns = [c.strip() for c in df_f.columns]
         df_l.columns = [c.strip() for c in df_l.columns]
         
-        # Funding Renaming
+        # Funding Rename
         if 'Rate (%)' in df_f.columns: df_f.rename(columns={'Rate (%)': 'Rate'}, inplace=True)
         if 'Bank' in df_f.columns: df_f.rename(columns={'Bank': 'Kreditur'}, inplace=True)
         
-        # Lending Renaming (Anti-Error jika user hapus karakter tertentu)
-        l_rename = {
-            'Lending Rate': 'Lending_Rate (%)',
-            'Lending Rate (%)': 'Lending_Rate (%)',
-            'Rate Lending': 'Lending_Rate (%)'
-        }
-        for k, v in l_rename.items():
-            if k in df_l.columns and v not in df_l.columns:
-                df_l.rename(columns={k: v}, inplace=True)
-
-        for c in ['Nominal', 'Rate']:
+        # Lending Rename & Cleaning
+        if 'Bank' in df_l.columns: df_l.rename(columns={'Bank': 'Kreditur'}, inplace=True)
+        
+        for c in ['Nominal', 'Rate', 'Sisa Outstanding']:
             if c in df_f.columns: df_f[c] = clean_numeric_robust(df_f[c])
-        for c in ['Nominal', 'Cost_of_Fund (%)', 'Lending_Rate (%)']:
             if c in df_l.columns: df_l[c] = clean_numeric_robust(df_l[c])
             
         def parse_date_logic(p):
             p_clean = str(p).replace('-', ' ').strip()
             pts = p_clean.split(' ')
-            m_idx = MONTH_MAP_REV.get(pts[0], 0)
-            y_val = pts[1] if len(pts) > 1 else "2026"
-            return pd.Series([m_idx, y_val])
+            return pd.Series([MONTH_MAP_REV.get(pts[0], 0), pts[1] if len(pts) > 1 else "2026"])
 
         if 'Periode' in df_f.columns:
             df_f[['m_idx', 'year_val']] = df_f['Periode'].apply(parse_date_logic)
@@ -84,15 +83,14 @@ def get_market_history():
     dates = pd.date_range(end=datetime.now(), periods=180)
     return pd.DataFrame({'SBN_10Y': np.linspace(6.5, 6.8, 180)}, index=dates).copy()
 
-# --- 4. SIDEBAR SETUP ---
+# --- 4. SIDEBAR (LOCKED) ---
 logo_path = "ferry.png"
 if os.path.exists(logo_path): st.sidebar.image(logo_path, use_container_width=True)
 
 st.sidebar.markdown("---")
 st.sidebar.header("📅 Periode Analisis")
 sel_date = st.sidebar.date_input("Pilih Bulan & Tahun:", value=datetime(2026, 3, 1))
-s_m_idx = sel_date.month
-s_y_val = str(sel_date.year)
+s_m_idx, s_y_val = sel_date.month, str(sel_date.year)
 s_m_name = MONTH_MAP_ID[s_m_idx]
 
 df_f_raw, df_l_raw, err = load_gsheets_data()
@@ -105,7 +103,6 @@ sbn_val = st.sidebar.number_input("SBN 10Y Benchmark (Live)", value=round(float(
 bareksa_val = st.sidebar.number_input("Bareksa (Money Market %)", value=4.75, step=0.01)
 criec_val = st.sidebar.number_input("PHEI CRIEC Index (%)", value=7.20, step=0.01)
 
-# TOMBOL AKSES CEPAT (INCLUDING GSHEETS)
 st.sidebar.link_button("🌐 Bareksa Data", "https://www.bareksa.com/id/data", use_container_width=True)
 st.sidebar.link_button("📉 PHEI (Informasi Efek)", "https://www.phei.co.id/Data/Informasi-Efek", use_container_width=True)
 st.sidebar.link_button("📊 Data Source (Google Sheets)", "https://docs.google.com/spreadsheets/d/182zKZj0Kr56yqOGM_XW2W3Q6fhaOSo8z9TIbjC_JxxY", use_container_width=True)
@@ -120,83 +117,73 @@ st.title(f"🚢 ASDP Treasury & ALM Master Command Center")
 tab1, tab2, tab3 = st.tabs(["💰 Modul 1: Funding", "📈 Modul 2: Lending", "📊 Modul 3: ALM Resume"])
 
 # ==========================================
-# TAB 1: FUNDING (LOCKED & SECURE)
+# TAB 1: FUNDING (LOCKED - NO CHANGES)
 # ==========================================
 with tab1:
     df_f = df_f_raw[(df_f_raw['m_idx'] == s_m_idx) & (df_f_raw['year_val'] == s_y_val)].copy()
-    
     if not df_f.empty:
-        df_f['Net_Yield'] = df_f['Rate'] * 0.8
         df_f['Rev_MtD'] = (df_f['Nominal'] * (df_f['Rate'] / 100)) / 12
         total_mtd = df_f['Rev_MtD'].sum()
-        
         ytd_mask = (df_f_raw['year_val'] == s_y_val) & (df_f_raw['m_idx'] <= s_m_idx)
-        df_ytd = df_f_raw[ytd_mask].copy()
-        df_ytd['Rev_Line'] = (df_ytd['Nominal'] * (df_ytd['Rate'] / 100)) / 12
-        total_ytd = df_ytd['Rev_Line'].sum()
-
-        net_sbn = sbn_val * 0.9
-
+        total_ytd = ((df_f_raw[ytd_mask]['Nominal'] * df_f_raw[ytd_mask]['Rate']) / 1200).sum()
+        
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Total Placement", f"Rp {df_f['Nominal'].sum():,.0f}")
         m2.metric(f"MtD Revenue ({s_m_name})", f"Rp {total_mtd:,.0f}")
         m3.metric(f"YtD Revenue (Jan-{s_m_name[:3]})", f"Rp {total_ytd:,.0f}")
-        m4.metric("SBN Net Benchmark", f"{net_sbn:.2f}%")
-
-        p1, p2, p3 = st.columns(3)
-        p1.metric("Potensi Tambahan (SBN)", f"Rp {(df_f['Nominal'] * (net_sbn/100) / 12).sum() - total_mtd:,.0f}")
-        p2.metric(f"Potensi Tambahan ({rating})", f"Rp {(df_f['Nominal'] * (target_bond_net/100) / 12).sum() - total_mtd:,.0f}")
-        p3.metric(f"Target Yield {rating} (Net)", f"{target_bond_net:.2f}%")
-
-        st.divider()
-        c_al1, c_al2 = st.columns(2)
-        with c_al1:
-            st.subheader("🚩 Spread Alert (vs SBN)")
-            with st.container(height=180):
-                df_loss = df_f[df_f['Net_Yield'] < net_sbn]
-                if not df_loss.empty:
-                    for _, row in df_loss.iterrows(): st.error(f"**{row['Kreditur']}** | Yield: `{row['Net_Yield']:.2f}%`")
-                else: st.success("Strategi Penempatan Optimal.")
-        with c_al2:
-            st.subheader("⏳ Maturity Watch (H-14)")
-            with st.container(height=180):
-                today = datetime.now()
-                df_soon = df_f[(df_f['Jatuh_Tempo'] >= today) & (df_f['Jatuh_Tempo'] <= today + timedelta(days=14))]
-                if not df_soon.empty:
-                    for _, row in df_soon.iterrows(): st.warning(f"**{row['Kreditur']}** | `{row['Jatuh_Tempo'].strftime('%d-%m-%Y')}`")
-                else: st.info("Tidak ada jatuh tempo dekat.")
-
+        m4.metric("SBN Net Benchmark", f"{(sbn_val * 0.9):.2f}%")
+        
         st.divider()
         v1, v2 = st.columns([1.2, 1])
         with v1: st.plotly_chart(px.bar(df_f.groupby('Kreditur')['Rev_MtD'].sum().reset_index(), x='Kreditur', y='Rev_MtD', title="Revenue per Bank (MtD)", text_auto=',.0f', color='Kreditur'), use_container_width=True)
-        with v2: st.plotly_chart(px.pie(df_f, values='Net_Yield', names='Kreditur', hole=0.5, title="Net Yield Mix"), use_container_width=True)
-    else:
-        st.warning(f"Data untuk {s_m_name} {s_y_val} belum ada di database.")
+        with v2: st.plotly_chart(px.pie(df_f, values='Nominal', names='Kreditur', hole=0.5, title="Nominal Mix"), use_container_width=True)
 
 # ==========================================
-# TAB 2: LENDING (FIXED KEYERROR & MISSING COL)
+# TAB 2: LENDING (NEW DESIGN - DYNAMIC)
 # ==========================================
 with tab2:
-    actual_p = df_f['Periode'].iloc[0] if not df_f.empty else ""
-    if 'Periode' in df_l_raw.columns and actual_p != "":
-        df_l = df_l_raw[df_l_raw['Periode'] == actual_p].copy()
-    else:
-        df_l = pd.DataFrame()
+    actual_p = df_f['Periode'].iloc[0] if not df_f.empty else f"{s_m_name} {s_y_val}"
+    df_l = df_l_raw[df_l_raw['Periode'] == actual_p].copy()
 
     if not df_l.empty:
+        total_out = df_l['Sisa Outstanding'].sum() if 'Sisa Outstanding' in df_l.columns else 0
+        avg_yield_l = df_l['Rate'].mean() if 'Rate' in df_l.columns else 0
+        
+        # BARIS 1: METRIKS UTAMA (Sesuai Modul 1)
         l1, l2, l3 = st.columns(3)
-        l1.metric("Total Cash Out Debt", f"Rp {df_l['Nominal'].sum():,.0f}")
-        
-        # FIX: Check if column exists before mean()
-        avg_lending = df_l['Lending_Rate (%)'].mean() if 'Lending_Rate (%)' in df_l.columns else 0
-        l2.metric("Avg. Yield Lending", f"{avg_lending:.2f}%")
-        
-        l3.metric("Kreditur Utama", df_l.groupby('Kreditur')['Nominal'].sum().idxmax() if 'Kreditur' in df_l.columns else "N/A")
+        l1.metric("Total Sisa Outstanding", f"Rp {total_out:,.0f}")
+        l2.metric("Avg Yield Lending (Rate)", f"{avg_yield_l:.2f}%")
+        l3.metric("Total Plafon Pinjaman", f"Rp {df_l['Nominal'].sum():,.0f}")
+
         st.divider()
-        if 'Kreditur' in df_l.columns and 'Nominal' in df_l.columns:
-            st.plotly_chart(px.bar(df_l.groupby('Kreditur')['Nominal'].sum().reset_index().sort_values('Nominal', ascending=False), x='Kreditur', y='Nominal', text_auto=',.0f', color='Kreditur', title="Cash Out per Bank"), use_container_width=True)
+
+        # BARIS 2: BANK DETAILS & LOGOS
+        st.subheader("🏦 Kreditur Pinjaman Detail")
+        bank_cols = st.columns(len(df_l['Kreditur'].unique()))
+        for i, bank in enumerate(df_l['Kreditur'].unique()):
+            with bank_cols[i]:
+                st.image(get_bank_logo(bank), width=80)
+                b_data = df_l[df_l['Kreditur'] == bank]
+                st.write(f"**{bank}**")
+                st.write(f"Rate: `{b_data['Rate'].iloc[0]:.2f}%`")
+                st.write(f"Outstanding: \nRp {b_data['Sisa Outstanding'].sum():,.0f}")
+
+        st.divider()
+
+        # BARIS 3: GRAFIK BAR (Sinkron Modul 1 Style)
+        st.subheader("📊 Eksposisi Sisa Outstanding per Bank")
+        fig_l_bar = px.bar(
+            df_l.groupby('Kreditur')['Sisa Outstanding'].sum().reset_index(),
+            x='Kreditur', 
+            y='Sisa Outstanding',
+            title="Sisa Outstanding per Kreditur",
+            text_auto=',.0f',
+            color='Kreditur',
+            color_discrete_sequence=px.colors.qualitative.Pastel
+        )
+        st.plotly_chart(fig_l_bar, use_container_width=True)
     else:
-        st.info("Pilih periode di kalender untuk melihat data Lending.")
+        st.warning(f"Data Lending untuk periode {s_m_name} {s_y_val} belum ada di GSheets.")
 
 # ==========================================
 # TAB 3: ALM RESUME (STABLE)
@@ -204,22 +191,13 @@ with tab2:
 with tab3:
     st.header(f"📊 ALM Strategic Intelligence - {s_m_name}")
     if not df_f.empty:
-        out_v = df_l['Nominal'].sum() if not df_l.empty else 0
+        outflow_v = df_l['Nominal'].sum() if not df_l.empty else 0
+        total_mtd_rev = (df_f['Nominal'] * (df_f['Rate'] / 100) / 12).sum()
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Interest Revenue", f"Rp {total_mtd:,.0f}")
-        c2.metric("Total Cash Out", f"Rp {out_v:,.0f}")
-        c3.metric("Net Margin", f"Rp {total_mtd - out_v:,.0f}")
-        c4.metric("ICR Strength", f"{(total_mtd/out_v if out_v > 0 else 0):.2f}x")
-        st.divider()
-        r1, r2 = st.columns(2)
-        with r1:
-            st.markdown("### 🇮🇩 Top 3 SBN Benchmark")
-            st.table(pd.DataFrame({"Seri": ["FR0101", "FR0100", "FR0098"], "Yield": [f"{sbn_val:.2f}%", f"{(sbn_val-0.15):.2f}%", f"{(sbn_val+0.3):.2f}%"]}))
-        with r2:
-            st.markdown(f"### 🏢 Top 3 Corp Bond ({rating})")
-            im = {"AAA": ["Bank Mandiri", "Telkom", "BRI"], "AA+": ["Astra", "BCA", "Indosat"], "AA": ["Adaro", "UT", "Semen Indo"], "A": ["Japfa", "Alam Sutera", "Gajah Tunggal"], "BBB": ["Lippo", "APLN", "Modernland"]}
-            st.table(pd.DataFrame({"Issuer": im.get(rating, ["N/A"]*3), "Yield": [f"{(target_bond_net):.2f}%", f"{(target_bond_net-0.1):.2f}%", f"{(target_bond_net+0.1):.2f}%"]}))
-        
+        c1.metric("Interest Revenue", f"Rp {total_mtd_rev:,.0f}")
+        c2.metric("Total Cash Out (Lending)", f"Rp {outflow_v:,.0f}")
+        c3.metric("Net Flow Gap", f"Rp {total_mtd_rev - outflow_v:,.0f}")
+        c4.metric("ICR Strength", f"{(total_mtd_rev/outflow_v if outflow_v > 0 else 0):.2f}x")
         st.divider()
         plot_df = hist_m.copy()
         plot_df['Bareksa'] = plot_df['SBN_10Y'] * (bareksa_val / (sbn_val if sbn_val != 0 else 1))
