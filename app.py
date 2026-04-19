@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 # --- 1. KONFIGURASI HALAMAN ---
 st.set_page_config(page_title="ASDP ALM Strategic Command", layout="wide", page_icon="🚢")
 
-# --- 2. ENGINE DATA ---
+# --- 2. ENGINE DATA (DIPERKUAT) ---
 def clean_numeric_robust(series):
     def process_val(val):
         val = str(val).strip().replace('Rp', '').replace('%', '').replace(' ', '').replace(',', '')
@@ -18,8 +18,8 @@ def clean_numeric_robust(series):
         return val
     return pd.to_numeric(series.apply(lambda x: str(x).replace('.', '') if '.' in str(x) and len(str(x).split('.')[-1]) == 3 else x).apply(process_val), errors='coerce').fillna(0)
 
-# Helper untuk urutan bulan YtD
-month_map = {
+# Map bulan standar untuk kalkulasi YtD
+MONTH_MAP = {
     'Januari': 1, 'Februari': 2, 'Maret': 3, 'April': 4, 'Mei': 5, 'Juni': 6,
     'Juli': 7, 'Agustus': 8, 'September': 9, 'Oktober': 10, 'November': 11, 'Desember': 12
 }
@@ -33,10 +33,10 @@ def load_gsheets_data():
         df_l = pd.read_csv(base_url + "Lending")
         df_f.columns = [c.strip() for c in df_f.columns]
         df_l.columns = [c.strip() for c in df_l.columns]
+        
         if 'Rate (%)' in df_f.columns: df_f.rename(columns={'Rate (%)': 'Rate'}, inplace=True)
         if 'Bank' in df_l.columns: df_l.rename(columns={'Bank': 'Kreditur'}, inplace=True)
         
-        # Cleaning angka di dataframe mentah
         for c in ['Nominal', 'Rate']:
             if c in df_f.columns: df_f[c] = clean_numeric_robust(df_f[c])
         for c in ['Nominal', 'Cost_of_Fund (%)', 'Lending_Rate (%)']:
@@ -45,6 +45,11 @@ def load_gsheets_data():
         for df in [df_f, df_l]:
             if 'Jatuh_Tempo' in df.columns: 
                 df['Jatuh_Tempo'] = pd.to_datetime(df['Jatuh_Tempo'], dayfirst=True, errors='coerce')
+        
+        # Tambahkan kolom helper urutan bulan langsung saat loading agar tidak KeyError
+        df_f['month_idx'] = df_f['Periode'].apply(lambda x: MONTH_MAP.get(str(x).split(' ')[0], 0))
+        df_f['year_idx'] = df_f['Periode'].apply(lambda x: str(x).split(' ')[1] if len(str(x).split(' ')) > 1 else "2026")
+        
         return df_f, df_l, None
     except Exception as e: return pd.DataFrame(), pd.DataFrame(), str(e)
 
@@ -65,20 +70,15 @@ st.sidebar.markdown("---")
 df_f_raw, df_l_raw, err = load_gsheets_data()
 if err: st.stop()
 
-all_months = sorted(list(set(df_f_raw['Periode'].unique()) | set(df_l_raw['Periode'].unique())), reverse=True)
+all_months = sorted(df_f_raw['Periode'].unique().tolist(), 
+                    key=lambda x: (str(x).split(' ')[1], MONTH_MAP.get(str(x).split(' ')[0], 0)), 
+                    reverse=True)
 sel_month = st.sidebar.selectbox("Pilih Periode Analisis:", all_months)
 
-# LOGIKA YTD: Ambil bulan dan tahun dari periode terpilih
-try:
-    sel_month_name = sel_month.split(' ')[0]
-    sel_year = sel_month.split(' ')[1]
-    sel_month_num = month_map.get(sel_month_name, 0)
-except:
-    sel_month_num, sel_year = 0, "2026"
-
-# Filter data bulanan (MtD)
-df_f = df_f_raw[df_f_raw['Periode'] == sel_month].copy()
-df_l = df_l_raw[df_l_raw['Periode'] == sel_month].copy()
+# Ambil metadata dari pilihan user
+sel_month_name = sel_month.split(' ')[0]
+sel_year = sel_month.split(' ')[1]
+sel_idx = MONTH_MAP.get(sel_month_name, 0)
 
 # Market Intelligence
 hist_data = get_market_history()
@@ -95,29 +95,30 @@ st.title(f"🚢 ASDP Treasury & ALM Master Command Center")
 tab1, tab2, tab3 = st.tabs(["💰 Modul 1: Funding", "📈 Modul 2: Lending", "📊 Modul 3: ALM Resume"])
 
 # ==========================================
-# TAB 1: FUNDING (LAYOUT WHATSAPP + YTD)
+# TAB 1: FUNDING (FIXED YTD LOGIC)
 # ==========================================
 with tab1:
+    # Filter MtD
+    df_f = df_f_raw[df_f_raw['Periode'] == sel_month].copy()
+    
     if not df_f.empty:
-        # Perhitungan MtD
+        # Kalkulasi MtD
         df_f['Net_Yield'] = df_f['Rate'] * 0.8
         df_f['Pendapatan_Riil'] = (df_f['Nominal'] * (df_f['Rate'] / 100)) / 12
         mtd_rev = df_f['Pendapatan_Riil'].sum()
         
-        # PERHITUNGAN YTD (AKUMULASI)
-        df_f_ytd = df_f_raw[df_f_raw['Periode'].str.contains(sel_year)].copy()
-        df_f_ytd['month_num'] = df_f_ytd['Periode'].apply(lambda x: month_map.get(x.split(' ')[0], 0))
-        df_f_ytd = df_f_ytd[df_f_ytd['month_num'] <= sel_month_num]
-        df_f_ytd['Pendapatan_YtD'] = (df_f_ytd['Nominal'] * (df_f_ytd['Rate'] / 100)) / 12
-        ytd_rev_total = df_f_ytd['Pendapatan_YtD'].sum()
+        # FIX YTD: Filter HANYA tahun yang sama DAN bulan <= bulan terpilih
+        df_ytd = df_f_raw[(df_f_raw['year_idx'] == sel_year) & (df_f_raw['month_idx'] <= sel_idx)].copy()
+        df_ytd['Revenue_Calc'] = (df_ytd['Nominal'] * (df_ytd['Rate'] / 100)) / 12
+        ytd_rev = df_ytd['Revenue_Calc'].sum()
 
         net_sbn = sbn_val * 0.9
 
-        # BARIS 1: METRICS UTAMA (MtD & YtD)
+        # BARIS 1: METRICS UTAMA (WhatsApp Style + YtD)
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Total Placement", f"Rp {df_f['Nominal'].sum():,.0f}")
         m2.metric(f"MtD Revenue ({sel_month_name})", f"Rp {mtd_rev:,.0f}")
-        m3.metric(f"YtD Revenue (Jan - {sel_month_name})", f"Rp {ytd_rev_total:,.0f}")
+        m3.metric(f"YtD Revenue (Jan-{sel_month_name})", f"Rp {ytd_rev:,.0f}")
         m4.metric("SBN Net Benchmark", f"{net_sbn:.2f}%")
 
         # BARIS 2: OPPORTUNITY GAIN
@@ -148,7 +149,7 @@ with tab1:
         v1, v2 = st.columns([1.2, 1])
         with v1: 
             fig_rev = px.bar(df_f.groupby('Bank')['Pendapatan_Riil'].sum().reset_index(), 
-                             x='Bank', y='Pendapatan_Riil', title="MtD Revenue per Bank", text_auto=',.0f', color='Bank')
+                             x='Bank', y='Pendapatan_Riil', title="Revenue per Bank (MtD)", text_auto=',.0f', color='Bank')
             st.plotly_chart(fig_rev, use_container_width=True)
         with v2: st.plotly_chart(px.pie(df_f, values='Net_Yield', names='Bank', hole=0.5, title="Net Yield Mix"), use_container_width=True)
 
@@ -156,6 +157,7 @@ with tab1:
 # TAB 2: LENDING (LOCKED)
 # ==========================================
 with tab2:
+    df_l = df_l_raw[df_l_raw['Periode'] == sel_month].copy()
     if not df_l.empty:
         total_cash_out_val = df_l['Nominal'].sum()
         l1, l2, l3 = st.columns(3)
@@ -178,7 +180,7 @@ with tab3:
     st.header(f"📊 ALM Strategic Intelligence - {sel_month}")
     if not df_f.empty and not df_l.empty:
         inflow_b = df_f['Pendapatan_Riil'].sum()
-        outflow_val = df_l['Nominal'].sum()
+        outflow_val = df_l_raw[df_l_raw['Periode'] == sel_month]['Nominal'].sum()
         icr = inflow_b / outflow_val if outflow_val > 0 else 0
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Interest Revenue", f"Rp {inflow_b:,.0f}")
@@ -186,7 +188,6 @@ with tab3:
         c3.metric("Net Interest Margin", f"Rp {inflow_b - outflow_val:,.0f}")
         c4.metric("ICR Strength", f"{icr:.2f}x")
         st.divider()
-        # RECOMENDATIONS SECTION
         rec1, rec2 = st.columns(2)
         with rec1:
             st.markdown("### 🇮🇩 Top 3 SBN Benchmark")
@@ -205,7 +206,7 @@ with tab3:
             corp_data = {"Issuer": picks["Issuer"], "Instrumen": picks["Inst"], "Yield": [f"{(sbn_val + spread_map[rating]/100):.2f}%", f"{(sbn_val + spread_map[rating]/100 - 0.1):.2f}%", f"{(sbn_val + spread_map[rating]/100 + 0.15):.2f}%"]}
             st.table(pd.DataFrame(corp_data))
         st.divider()
-        plot_market = raw_market_data.copy()
+        plot_market = hist_data.copy()
         plot_market['Bareksa'] = plot_market['SBN_10Y'] * (bareksa_val / (sbn_val if sbn_val != 0 else 1))
         plot_market['PHEI_Bond'] = plot_market['SBN_10Y'] * (criec_val / (sbn_val if sbn_val != 0 else 1))
         fig_h = go.Figure()
