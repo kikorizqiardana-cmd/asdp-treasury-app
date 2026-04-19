@@ -44,7 +44,6 @@ def load_gsheets_data():
         df_f = df_f_raw.dropna(subset=['Periode']).copy()
         df_l = df_l_raw.dropna(subset=['Periode']).copy()
 
-        # MAPPING KOLOM LENDING (Tetap Kreditur)
         def map_lending_cols(c):
             norm = " ".join(str(c).strip().lower().split())
             if 'bank' in norm or 'kreditur' in norm: return 'Kreditur'
@@ -57,7 +56,6 @@ def load_gsheets_data():
 
         df_l.columns = [map_lending_cols(c) for c in df_l.columns]
         
-        # MAPPING KOLOM FUNDING (Diganti jadi Bank)
         def map_funding_cols(c):
             norm = " ".join(str(c).strip().lower().split())
             if 'rate' in norm: return 'Rate'
@@ -130,7 +128,9 @@ st.sidebar.link_button("📊 Data Source (GSheets)", "https://docs.google.com/sp
 st.sidebar.markdown("---")
 rating = st.sidebar.selectbox("Rating Reinvestasi:", ["AAA", "AA+", "AA", "A", "BBB"])
 spread_map = {"AAA": 80, "AA+": 110, "AA": 140, "A": 260, "BBB": 480}
-# TARGET BOND NET (Dinamis dari input Sidebar)
+
+# KALKULASI NET TARGET (SBN & CORPORATE BOND)
+net_sbn = sbn_val * 0.9
 target_bond_net = (sbn_val + (spread_map[rating]/100)) * 0.9
 
 # --- 5. DASHBOARD UI ---
@@ -138,7 +138,7 @@ st.title(f"🚢 ASDP Treasury & ALM Master Command Center")
 tab1, tab2, tab3 = st.tabs(["💰 Modul 1: Funding", "📈 Modul 2: Lending", "📊 Modul 3: ALM Resume"])
 
 # ==========================================
-# TAB 1: FUNDING (MODIFIED TO "BANK" & "RESUME")
+# TAB 1: FUNDING (EXECUTIVE SUMMARY)
 # ==========================================
 with tab1:
     df_f = df_f_raw[(df_f_raw['m_idx'] == s_m_idx) & (df_f_raw['year_val'] == s_y_val)].copy()
@@ -152,14 +152,14 @@ with tab1:
         m1.metric("Total Placement", f"Rp {df_f['Nominal'].sum():,.0f}")
         m2.metric(f"MtD Revenue ({s_m_name})", f"Rp {total_mtd:,.0f}")
         m3.metric(f"YtD Revenue (Jan-{s_m_name[:3]})", f"Rp {total_ytd_f:,.0f}")
-        m4.metric("SBN Net Benchmark", f"{(sbn_val * 0.9):.2f}%")
+        m4.metric("SBN Net Benchmark", f"{net_sbn:.2f}%")
         
         st.divider()
+        # ALERT SECTION
         c_al1, c_al2 = st.columns(2)
         with c_al1:
             st.subheader("🚩 Spread Alert (vs SBN)")
             with st.container(height=180):
-                net_sbn = sbn_val * 0.9
                 df_loss = df_f[(df_f['Rate'] * 0.8) < net_sbn]
                 if not df_loss.empty:
                     for _, row in df_loss.iterrows(): st.error(f"**{row['Bank']}** | Yield Net: `{(row['Rate']*0.8):.2f}%`")
@@ -174,22 +174,29 @@ with tab1:
                 else: st.info("Tidak ada penempatan jatuh tempo dekat.")
 
         st.divider()
-        # TABEL RESUME DINAMIS
-        st.subheader("📊 Resume")
+        
+        # RESUME PROYEKSI (EXECUTIVE SUMMARY - TOTAL ONLY)
+        st.subheader("📊 Resume Proyeksi Tambahan (Per Bulan)")
         df_proj = df_f.copy()
         df_proj['Yield_Net'] = df_proj['Rate'] * 0.8
-        # Kalkulasi Gap & Proyeksi langsung membaca target_bond_net dari input Sidebar
-        df_proj['Gap_vs_Target'] = target_bond_net - df_proj['Yield_Net']
-        df_proj['Proyeksi_Tambahan'] = (df_proj['Gap_vs_Target'] / 100) * df_proj['Nominal'] / 12
         
-        st.dataframe(
-            df_proj[['Bank', 'Nominal', 'Rate', 'Yield_Net', 'Gap_vs_Target', 'Proyeksi_Tambahan']].style.format({
-                'Nominal': '{:,.0f}', 'Rate': '{:.2f}%', 'Yield_Net': '{:.2f}%', 
-                'Gap_vs_Target': '{:.2f}%', 'Proyeksi_Tambahan': '{:,.0f}'
-            }), use_container_width=True
-        )
+        # Total SBN
+        df_proj['Gap_SBN'] = net_sbn - df_proj['Yield_Net']
+        df_proj['Potensi_SBN'] = (df_proj['Gap_SBN'] / 100) * df_proj['Nominal'] / 12
+        tot_potensi_sbn = df_proj['Potensi_SBN'].sum()
+        
+        # Total Obligasi / Sukuk
+        df_proj['Gap_Obligasi'] = target_bond_net - df_proj['Yield_Net']
+        df_proj['Potensi_Obligasi'] = (df_proj['Gap_Obligasi'] / 100) * df_proj['Nominal'] / 12
+        tot_potensi_obligasi = df_proj['Potensi_Obligasi'].sum()
+
+        c_res1, c_res2 = st.columns(2)
+        c_res1.metric("Proyeksi Tambahan jika ke SBN", f"Rp {tot_potensi_sbn:,.0f}")
+        c_res2.metric("Proyeksi Tambahan jika ke Obligasi/Sukuk", f"Rp {tot_potensi_obligasi:,.0f}")
 
         st.divider()
+        
+        # CHARTS
         v1, v2 = st.columns([1.2, 1])
         with v1: st.plotly_chart(px.bar(df_f.groupby('Bank')['Rev_MtD'].sum().reset_index(), x='Bank', y='Rev_MtD', title="Revenue per Bank (MtD)", text_auto=',.0f', color='Bank'), use_container_width=True)
         with v2: st.plotly_chart(px.pie(df_f, values='Nominal', names='Bank', hole=0.5, title="Nominal Mix Placement"), use_container_width=True)
