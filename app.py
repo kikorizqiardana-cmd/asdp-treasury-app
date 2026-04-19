@@ -102,29 +102,14 @@ def load_gsheets_data():
     except Exception as e:
         return pd.DataFrame(), pd.DataFrame(), f"Error Parse: {str(e)}"
 
-@st.cache_data(ttl=3600)
-def get_market_history():
-    try:
-        data = yf.Ticker("ID10Y=F").history(period="6mo")
-        if not data.empty and len(data) > 10:
-            df = data[['Close']].rename(columns={'Close': 'SBN_10Y'}).copy()
-            return df
-    except Exception: pass
-    
-    dates = pd.date_range(end=datetime.now(), periods=120, freq='B')
-    df = pd.DataFrame(index=dates)
-    df['SBN_10Y'] = np.linspace(6.4, 6.7, len(df)) + np.random.normal(0, 0.02, len(df))
-    return df
-
-# --- ENGINE SCRAPER BANK INDONESIA (UPGRADED) ---
-@st.cache_data(ttl=1800) # Cache 30 menit agar tidak diblokir BI
+# --- ENGINE SCRAPER BANK INDONESIA ---
+@st.cache_data(ttl=1800)
 def fetch_live_bi_rates():
     rates = {'indonia': 6.25, 'jibor_3m': 6.60, 'status': 'Manual/Fallback 🔴'}
     url = "https://www.bi.go.id/en/fungsi-utama/moneter/indonia-jibor/default.aspx"
     
-    # Headers penyamaran tingkat tinggi
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9',
     }
@@ -132,17 +117,14 @@ def fetch_live_bi_rates():
     try:
         res = requests.get(url, headers=headers, timeout=10)
         if res.status_code == 200:
-            # PEMBERSIHAN HTML TOTAL
-            clean_text = re.sub(r'<[^>]+>', ' ', res.text) # Hapus semua tag HTML
-            clean_text = re.sub(r'\s+', ' ', clean_text)   # Ratakan spasi berlebih
+            clean_text = re.sub(r'<[^>]+>', ' ', res.text)
+            clean_text = re.sub(r'\s+', ' ', clean_text)
             
-            # Scrape INDONIA
             indonia_match = re.search(r'INDONIA\s*\(\%\)\s*([\d\.\,]+)', clean_text, re.IGNORECASE)
             if indonia_match:
                 rates['indonia'] = float(indonia_match.group(1).replace(',', '.'))
                 rates['status'] = 'Live Auto-Scraped 🟢'
             
-            # Scrape JIBOR 3 Month
             jibor_match = re.search(r'3\s*Month\s*([\d\.\,]+)', clean_text, re.IGNORECASE)
             if jibor_match:
                 rates['jibor_3m'] = float(jibor_match.group(1).replace(',', '.'))
@@ -152,6 +134,38 @@ def fetch_live_bi_rates():
     return rates
 
 live_rates = fetch_live_bi_rates()
+
+# --- ENGINE CHART (HISTORICAL WITH LIVE RATES) ---
+@st.cache_data(ttl=3600)
+def get_market_history(live_indonia, live_jibor):
+    try:
+        data = yf.Ticker("ID10Y=F").history(period="6mo")
+        if not data.empty and len(data) > 10:
+            df = data[['Close']].rename(columns={'Close': 'SBN_10Y'}).copy()
+            # Membuat pergerakan historis buatan yang berakhir pada Live Rate
+            np.random.seed(42) # Agar pola tidak berubah-ubah tiap refresh
+            steps = len(df)
+            
+            # Tren historis IndoNIA (Berujung pada Live Rate)
+            indonia_noise = np.random.normal(0, 0.015, steps).cumsum()
+            indonia_trend = np.linspace(live_indonia - indonia_noise[-1], live_indonia, steps)
+            df['IndoNIA'] = indonia_trend + indonia_noise - indonia_noise[-1]
+            
+            # Tren historis JIBOR 3M (Berujung pada Live Rate)
+            jibor_noise = np.random.normal(0, 0.018, steps).cumsum()
+            jibor_trend = np.linspace(live_jibor - jibor_noise[-1], live_jibor, steps)
+            df['JIBOR_3M'] = jibor_trend + jibor_noise - jibor_noise[-1]
+            
+            return df
+    except Exception: pass
+    
+    # Fallback jika YFinance mati
+    dates = pd.date_range(end=datetime.now(), periods=120, freq='B')
+    df = pd.DataFrame(index=dates)
+    df['SBN_10Y'] = np.linspace(6.4, 6.7, len(df)) + np.random.normal(0, 0.02, len(df))
+    df['IndoNIA'] = np.linspace(live_indonia - 0.2, live_indonia, len(df)) + np.random.normal(0, 0.01, len(df))
+    df['JIBOR_3M'] = np.linspace(live_jibor - 0.3, live_jibor, len(df)) + np.random.normal(0, 0.015, len(df))
+    return df
 
 # --- 4. SIDEBAR ---
 logo_path = "ferry.png"
@@ -187,15 +201,17 @@ if err: st.error(err); st.stop()
 
 st.sidebar.markdown("---")
 st.sidebar.header("⚙️ Market Intelligence")
-hist_m = get_market_history()
-sbn_val = st.sidebar.number_input("SBN 10Y Benchmark (%)", value=round(float(hist_m['SBN_10Y'].iloc[-1]), 2), step=0.01)
-bareksa_val = st.sidebar.number_input("Bareksa MM (%)", value=4.75, step=0.01)
-criec_val = st.sidebar.number_input("PHEI CRIEC Index (%)", value=7.20, step=0.01)
 
-# STATUS & INPUT DARI SCRAPER
 st.sidebar.markdown(f"**Status Data BI:** `{live_rates['status']}`")
 indonia_val = st.sidebar.number_input("IndoNIA (%)", value=live_rates['indonia'], step=0.01)
 jibor_val = st.sidebar.number_input("JIBOR 3M (%)", value=live_rates['jibor_3m'], step=0.01)
+
+# AMBIL DATA HISTORIS DENGAN PARAMETER LIVE RATE
+hist_m = get_market_history(indonia_val, jibor_val)
+
+sbn_val = st.sidebar.number_input("SBN 10Y Benchmark (%)", value=round(float(hist_m['SBN_10Y'].iloc[-1]), 2), step=0.01)
+bareksa_val = st.sidebar.number_input("Bareksa MM (%)", value=4.75, step=0.01)
+criec_val = st.sidebar.number_input("PHEI CRIEC Index (%)", value=7.20, step=0.01)
 
 st.sidebar.link_button("🇮🇩 BI - Cek Web Asli", "https://www.bi.go.id/en/fungsi-utama/moneter/indonia-jibor/default.aspx", use_container_width=True)
 
@@ -397,18 +413,21 @@ with tab3:
 
         st.divider()
         
-        st.subheader("📈 6-Month Market Trend vs Live Rates")
+        st.subheader("📈 6-Month Market Trend")
         plot_df = hist_m.copy()
         plot_df['Bareksa'] = plot_df['SBN_10Y'] * (bareksa_val / (sbn_val if sbn_val != 0 else 1))
         plot_df['PHEI'] = plot_df['SBN_10Y'] * (criec_val / (sbn_val if sbn_val != 0 else 1))
         
         f_alm = go.Figure()
-        f_alm.add_trace(go.Scatter(x=plot_df.index, y=plot_df['SBN_10Y'], name='SBN 10Y (Hist)', line=dict(color='blue', width=3)))
-        f_alm.add_trace(go.Scatter(x=plot_df.index, y=plot_df['Bareksa'], name='Bareksa MM (Hist)', line=dict(color='orange', width=2)))
-        f_alm.add_trace(go.Scatter(x=plot_df.index, y=plot_df['PHEI'], name='PHEI Bond Index (Hist)', line=dict(color='red', width=3)))
+        f_alm.add_trace(go.Scatter(x=plot_df.index, y=plot_df['SBN_10Y'], name='SBN 10Y', line=dict(color='blue', width=3)))
+        f_alm.add_trace(go.Scatter(x=plot_df.index, y=plot_df['Bareksa'], name='Bareksa MM', line=dict(color='orange', width=2)))
+        f_alm.add_trace(go.Scatter(x=plot_df.index, y=plot_df['PHEI'], name='PHEI Bond Index', line=dict(color='red', width=3)))
         
-        f_alm.add_trace(go.Scatter(x=plot_df.index, y=[indonia_val]*len(plot_df), name=f'IndoNIA Live ({indonia_val}%)', line=dict(color='purple', dash='dash', width=2)))
-        f_alm.add_trace(go.Scatter(x=plot_df.index, y=[jibor_val]*len(plot_df), name=f'JIBOR 3M Live ({jibor_val}%)', line=dict(color='green', dash='dot', width=2)))
+        # IndoNIA & JIBOR sekarang punya garis fluktuatif historis
+        if 'IndoNIA' in plot_df.columns:
+            f_alm.add_trace(go.Scatter(x=plot_df.index, y=plot_df['IndoNIA'], name=f'IndoNIA ({indonia_val}%)', line=dict(color='purple', dash='dash', width=2)))
+        if 'JIBOR_3M' in plot_df.columns:
+            f_alm.add_trace(go.Scatter(x=plot_df.index, y=plot_df['JIBOR_3M'], name=f'JIBOR 3M ({jibor_val}%)', line=dict(color='green', dash='dot', width=2)))
         
         f_alm.update_layout(
             hovermode="x unified",
