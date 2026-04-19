@@ -23,16 +23,23 @@ MONTH_LOOKUP = {
 
 # --- 3. ENGINE DATA (PRECISION NUMERIC & DATE RADAR) ---
 def clean_numeric_robust(val):
-    if pd.isna(val): return 0.0
+    if pd.isna(val): 
+        return 0.0
     val_str = str(val).strip().replace('Rp', '').replace('%', '').replace(' ', '')
-    if not val_str or val_str.lower() == 'nan': return 0.0
-    if ',' in val_str and '.' in val_str: val_str = val_str.replace('.', '').replace(',', '.')
-    elif ',' in val_str: val_str = val_str.replace(',', '.')
+    if not val_str or val_str.lower() == 'nan': 
+        return 0.0
+    if ',' in val_str and '.' in val_str: 
+        val_str = val_str.replace('.', '').replace(',', '.')
+    elif ',' in val_str: 
+        val_str = val_str.replace(',', '.')
     elif '.' in val_str: 
         parts = val_str.split('.')
-        if len(parts[-1]) == 3: val_str = val_str.replace('.', '')
-    try: return float(val_str)
-    except: return 0.0
+        if len(parts[-1]) == 3: 
+            val_str = val_str.replace('.', '')
+    try: 
+        return float(val_str)
+    except Exception: 
+        return 0.0
 
 @st.cache_data(ttl=1)
 def load_gsheets_data():
@@ -90,7 +97,8 @@ def load_gsheets_data():
             try:
                 pts = str(p).replace('-', ' ').strip().split()
                 return int(pts[1]) if len(pts) > 1 else 2026
-            except: return 2026
+            except Exception: 
+                return 2026
 
         df_f['m_idx'] = df_f['Periode'].apply(robust_parse_month)
         df_f['year_val'] = df_f['Periode'].apply(robust_parse_year)
@@ -101,7 +109,7 @@ def load_gsheets_data():
     except Exception as e:
         return pd.DataFrame(), pd.DataFrame(), f"Error Parse: {str(e)}"
 
-# ENGINE CHART: Anti badai
+# ENGINE CHART: Anti badai dengan block try-except Multi-line
 @st.cache_data(ttl=3600)
 def get_market_history():
     try:
@@ -109,7 +117,8 @@ def get_market_history():
         if not data.empty and len(data) > 10:
             df = data[['Close']].rename(columns={'Close': 'SBN_10Y'}).copy()
             return df
-    except: pass
+    except Exception: 
+        pass
     
     # Fallback 6 bulan jika YFinance gagal
     dates = pd.date_range(end=datetime.now(), periods=120, freq='B')
@@ -155,7 +164,6 @@ hist_m = get_market_history()
 sbn_val = st.sidebar.number_input("SBN 10Y Benchmark (%)", value=round(float(hist_m['SBN_10Y'].iloc[-1]), 2), step=0.01)
 bareksa_val = st.sidebar.number_input("Bareksa MM (%)", value=4.75, step=0.01)
 criec_val = st.sidebar.number_input("PHEI CRIEC Index (%)", value=7.20, step=0.01)
-# PENAMBAHAN INDONIA DAN JIBOR SEBAGAI LIVE RATE
 indonia_val = st.sidebar.number_input("IndoNIA (Live %)", value=6.25, step=0.01)
 jibor_val = st.sidebar.number_input("JIBOR 1M (Live %)", value=6.60, step=0.01)
 
@@ -174,7 +182,7 @@ st.title(f"🚢 ASDP Treasury & ALM Master Command Center")
 tab1, tab2, tab3 = st.tabs(["💰 Modul 1: Funding", "📈 Modul 2: Lending", "📊 Modul 3: ALM Resume"])
 
 # ==========================================
-# TAB 1: FUNDING (LOCKED)
+# TAB 1: FUNDING
 # ==========================================
 with tab1:
     df_f = df_f_raw[(df_f_raw['m_idx'] == s_m_idx) & (df_f_raw['year_val'] == s_y_val)].copy()
@@ -237,7 +245,7 @@ with tab1:
         st.warning(f"Data Funding untuk {s_m_name} {s_y_val} tidak ditemukan.")
 
 # ==========================================
-# TAB 2: LENDING (LOCKED)
+# TAB 2: LENDING
 # ==========================================
 with tab2:
     df_l = df_l_raw[(df_l_raw['m_idx'] == s_m_idx) & (df_l_raw['year_val'] == s_y_val)].copy()
@@ -293,19 +301,17 @@ with tab2:
             df_plot = pd.DataFrame(plot_data)
             st.plotly_chart(px.bar(df_plot, x='Kreditur', y=['Pokok', 'Bunga'], title="Breakdown Pembayaran Pokok vs Bunga", barmode='group', color_discrete_sequence=['#1f77b4', '#ff7f0e']), use_container_width=True)
     else:
-        st.warning(f"Data Lending untuk {s_m_name} {s_y_val} tidak ditemukan. Cek penulisan Periode di GSheet.")
+        st.warning(f"Data Lending untuk {s_m_name} {s_y_val} tidak ditemukan.")
 
 # ==========================================
-# TAB 3: ALM RESUME (YTD MATCHING & POKOK ALERT)
+# TAB 3: ALM RESUME
 # ==========================================
 with tab3:
     st.header(f"📊 ALM Strategic Intelligence - {s_m_name}")
     
-    # 1. PENGAMBILAN DATA YTD REVENUE
     ytd_mask_f = (df_f_raw['year_val'] == s_y_val) & (df_f_raw['m_idx'] <= s_m_idx) & (df_f_raw['m_idx'] > 0)
     ytd_rev = ((df_f_raw[ytd_mask_f]['Nominal'] * df_f_raw[ytd_mask_f]['Rate']) / 1200).sum()
 
-    # 2. PENGAMBILAN DATA LENDING (BUNGA VS POKOK)
     mtd_mask_l = (df_l_raw['year_val'] == s_y_val) & (df_l_raw['m_idx'] == s_m_idx)
     df_l_mtd = df_l_raw[mtd_mask_l].copy()
     
@@ -313,17 +319,72 @@ with tab3:
     df_l_ytd = df_l_raw[ytd_mask_l].copy()
 
     if not df_f.empty and not df_l_ytd.empty:
-        # Menghitung YtD Bunga (Untuk ICR)
         is_bunga_ytd = df_l_ytd['Tipe'].astype(str).str.contains('bunga|margin|fee', case=False, na=False)
         ytd_bunga_out = df_l_ytd.loc[is_bunga_ytd, 'Nominal_Lending'].sum()
         
-        # Menghitung MtD Pokok (Untuk Alert Cashflow Bulan Ini)
         is_bunga_mtd = df_l_mtd['Tipe'].astype(str).str.contains('bunga|margin|fee', case=False, na=False)
         mtd_pokok_out = df_l_mtd.loc[~is_bunga_mtd, 'Nominal_Lending'].sum()
 
         icr_val = (ytd_rev / ytd_bunga_out) if ytd_bunga_out > 0 else 0
         
-        # TAMPILAN 4 METRIK UTAMA
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("YtD Interest Revenue", f"Rp {ytd_rev:,.0f}")
-        c2.metric("YtD Interest Outflow", f"Rp {ytd_bunga_out:
+        c2.metric("YtD Interest Outflow", f"Rp {ytd_bunga_out:,.0f}")
+        c3.metric("Net Flow Gap (Interest)", f"Rp {ytd_rev - ytd_bunga_out:,.0f}")
+        c4.metric("ICR Strength (YtD)", f"{icr_val:.2f}x")
+        
+        st.divider()
+
+        if mtd_pokok_out > 0:
+            st.warning(f"🏦 **CASH FLOW ALERT:** Siapkan likuiditas operasional sebesar **Rp {mtd_pokok_out:,.0f}** untuk pembayaran **Pokok Pinjaman** di bulan {s_m_name} {s_y_val}.")
+        else:
+            st.info(f"✅ **Aman:** Tidak ada kewajiban pembayaran Pokok Pinjaman di bulan {s_m_name} {s_y_val}.")
+            
+        st.divider()
+        
+        st.subheader("⚠️ Risk Assessment & AI Insight")
+        cr1, cr2 = st.columns(2)
+        with cr1:
+            st.markdown("**1. ICR Operations Check (YtD)**")
+            if icr_val < 1.0:
+                st.error(f"🚨 **CRITICAL RISK (ICR: {icr_val:.2f}x):** Bunga placement YtD tidak menutupi kewajiban bunga pinjaman. Potensi defisit kas operasi berlanjut!")
+            elif icr_val < 1.5:
+                st.warning(f"⚠️ **WARNING (ICR: {icr_val:.2f}x):** ICR cukup tipis. Pertimbangkan realokasi penempatan ke instrumen dengan yield lebih tinggi.")
+            else:
+                st.success(f"✅ **SAFE (ICR: {icr_val:.2f}x):** ICR sangat sehat. Pendapatan bunga menutupi kewajiban dengan buffer yang memadai.")
+            st.markdown("[🤖 Tanya AI Assistant untuk Strategi Restrukturisasi](#)")
+
+        with cr2:
+            st.markdown("**2. Corporate Bond Reinvestment Risk**")
+            if rating == "AAA":
+                st.info("🛡️ **Rating AAA:** Risiko gagal bayar sangat rendah. Aman untuk penempatan dana besar, namun potensi yield sedikit tertahan.")
+            elif rating in ["AA+", "AA"]:
+                st.success(f"⚖️ **Rating {rating}:** Titik ekuilibrium terbaik antara keamanan (Investment Grade) dan optimalisasi spread.")
+            elif rating == "A":
+                st.warning("⚠️ **Rating A:** Waspada terhadap volatilitas pasar. Pastikan counterparty memiliki buffer likuiditas yang kuat.")
+            elif rating == "BBB":
+                st.error("🚨 **Rating BBB:** Batas bawah Investment Grade. Risiko downgrade ke *Junk Bond* terbuka lebar. Hanya untuk alokasi taktis!")
+
+        st.divider()
+        
+        st.subheader("📈 6-Month Market Trend vs Live Rates")
+        plot_df = hist_m.copy()
+        plot_df['Bareksa'] = plot_df['SBN_10Y'] * (bareksa_val / (sbn_val if sbn_val != 0 else 1))
+        plot_df['PHEI'] = plot_df['SBN_10Y'] * (criec_val / (sbn_val if sbn_val != 0 else 1))
+        
+        f_alm = go.Figure()
+        f_alm.add_trace(go.Scatter(x=plot_df.index, y=plot_df['SBN_10Y'], name='SBN 10Y (Hist)', line=dict(color='blue', width=3)))
+        f_alm.add_trace(go.Scatter(x=plot_df.index, y=plot_df['Bareksa'], name='Bareksa MM (Hist)', line=dict(color='orange', width=2)))
+        f_alm.add_trace(go.Scatter(x=plot_df.index, y=plot_df['PHEI'], name='PHEI Bond Index (Hist)', line=dict(color='red', width=3)))
+        
+        f_alm.add_trace(go.Scatter(x=plot_df.index, y=[indonia_val]*len(plot_df), name=f'IndoNIA Live ({indonia_val}%)', line=dict(color='purple', dash='dash', width=2)))
+        f_alm.add_trace(go.Scatter(x=plot_df.index, y=[jibor_val]*len(plot_df), name=f'JIBOR 1M Live ({jibor_val}%)', line=dict(color='green', dash='dot', width=2)))
+        
+        f_alm.update_layout(
+            hovermode="x unified",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            yaxis_title="Rate (%)"
+        )
+        st.plotly_chart(f_alm, use_container_width=True)
+    else:
+        st.info("Menunggu data sinkronisasi untuk menampilkan Resume ALM.")
