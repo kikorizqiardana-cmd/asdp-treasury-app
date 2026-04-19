@@ -29,7 +29,7 @@ def get_bank_logo(bank_name):
     if 'btn' in bank_name: return "https://upload.wikimedia.org/wikipedia/commons/f/fd/Bank_BTN_logo.svg"
     return "https://cdn-icons-png.flaticon.com/512/2830/2830284.png"
 
-# --- 3. ENGINE DATA (ULTRA DEFENSIVE) ---
+# --- 3. ENGINE DATA (TRIPLE SHIELD) ---
 def clean_numeric_robust(series):
     def process_val(val):
         if pd.isna(val): return "0"
@@ -42,38 +42,40 @@ def clean_numeric_robust(series):
 @st.cache_data(ttl=1)
 def load_gsheets_data():
     sheet_id = "182zKZj0Kr56yqOGM_XW2W3Q6fhaOSo8z9TIbjC_JxxY"
-    base_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx:out:csv&sheet="
+    base_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet="
     try:
-        # Load and drop rows that are completely empty
+        # Load and drop basic NaNs
         df_f = pd.read_csv(base_url + "Funding").dropna(subset=['Periode'])
         df_l = pd.read_csv(base_url + "Lending").dropna(subset=['Periode'])
         
-        # Super Robust Filter: Periode harus mengandung spasi (Bulan Tahun) dan digit (Tahun)
-        df_f = df_f[df_f['Periode'].astype(str).str.contains(' ') & df_f['Periode'].astype(str).str.contains(r'\d')].copy()
-        df_l = df_l[df_l['Periode'].astype(str).str.contains(' ') & df_l['Periode'].astype(str).str.contains(r'\d')].copy()
+        # Shield 1: Strict Period Filter (Must start with a month name or digit)
+        valid_starts = list(MONTH_MAP_REV.keys())
+        df_f = df_f[df_f['Periode'].astype(str).str.split().str[0].isin(valid_starts)].copy()
+        df_l = df_l[df_l['Periode'].astype(str).str.split().str[0].isin(valid_starts)].copy()
 
         df_f.columns = [c.strip() for c in df_f.columns]
         df_l.columns = [c.strip() for c in df_l.columns]
         
-        # Mapping Kolom Lending (Auto-Match)
+        # Smart Map Columns for Lending
         l_map = {'Bank': 'Kreditur', 'Rate': 'Lending_Rate', 'Sisa Outstanding': 'Outstanding', 'Pembayaran Pokok': 'Bayar_Pokok'}
         for o, n in l_map.items():
             if o in df_l.columns and n not in df_l.columns: df_l.rename(columns={o: n}, inplace=True)
         
-        # Clean numeric columns
         for c in ['Nominal', 'Rate']:
             if c in df_f.columns: df_f[c] = clean_numeric_robust(df_f[c])
         for c in ['Nominal', 'Lending_Rate', 'Outstanding', 'Bayar_Pokok']:
             if c in df_l.columns: df_l[c] = clean_numeric_robust(df_l[c])
             
-        # Parse Date with Index Protection
+        # Shield 2: Try-Except Date Parser
         def safe_parse_date(p):
-            p_str = str(p).replace('-', ' ').strip()
-            pts = p_str.split()
-            if len(pts) < 2: return pd.Series([0, "2026"])
-            m_idx = MONTH_MAP_REV.get(pts[0], 0)
-            y_val = pts[1]
-            return pd.Series([m_idx, y_val])
+            try:
+                p_str = str(p).replace('-', ' ').strip()
+                pts = p_str.split()
+                m_idx = MONTH_MAP_REV.get(pts[0], 0)
+                y_val = pts[1] if len(pts) > 1 else "2026"
+                return pd.Series([m_idx, str(y_val)])
+            except Exception:
+                return pd.Series([0, "2026"])
 
         df_f[['m_idx', 'year_val']] = df_f['Periode'].apply(safe_parse_date)
         df_l[['m_idx', 'year_val']] = df_l['Periode'].apply(safe_parse_date)
@@ -142,7 +144,7 @@ with tab1:
         with v2: st.plotly_chart(px.pie(df_f, values='Nominal', names='Kreditur', hole=0.5, title="Nominal Mix"), use_container_width=True)
 
 # ==========================================
-# TAB 2: LENDING (INVINCIBLE)
+# TAB 2: LENDING (ULTRA PRECISION)
 # ==========================================
 with tab2:
     df_l = df_l_raw[(df_l_raw['m_idx'] == s_m_idx) & (df_l_raw['year_val'] == s_y_val)].copy()
