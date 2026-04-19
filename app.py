@@ -29,12 +29,12 @@ def get_bank_logo(bank_name):
     if 'btn' in bank_name: return "https://upload.wikimedia.org/wikipedia/commons/f/fd/Bank_BTN_logo.svg"
     return "https://cdn-icons-png.flaticon.com/512/2830/2830284.png"
 
-# --- 3. ENGINE DATA (EXTRA ROBUST) ---
+# --- 3. ENGINE DATA (ULTRA ROBUST) ---
 def clean_numeric_robust(series):
     def process_val(val):
         if pd.isna(val): return "0"
         val = str(val).strip().replace('Rp', '').replace('%', '').replace(' ', '').replace(',', '')
-        if not val or val.lower() == 'nan': return "0"
+        if not val or val.lower() == 'nan' or val == '': return "0"
         if '.' in val and len(val.split('.')[-1]) == 3: val = val.replace('.', '')
         return val
     return pd.to_numeric(series.apply(process_val), errors='coerce').fillna(0)
@@ -44,38 +44,50 @@ def load_gsheets_data():
     sheet_id = "182zKZj0Kr56yqOGM_XW2W3Q6fhaOSo8z9TIbjC_JxxY"
     base_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet="
     try:
+        # Load and drop empty rows
         df_f = pd.read_csv(base_url + "Funding").dropna(how='all')
         df_l = pd.read_csv(base_url + "Lending").dropna(how='all')
         
         df_f.columns = [c.strip() for c in df_f.columns]
         df_l.columns = [c.strip() for c in df_l.columns]
         
-        # SMART MAPPING LENDING
-        l_map = {
-            'Bank': 'Kreditur', 'Rate': 'Lending_Rate', 'Lending Rate': 'Lending_Rate',
-            'Sisa Outstanding': 'Outstanding', 'Pembayaran Pokok': 'Bayar_Pokok'
+        # Smart Map Columns for Lending
+        l_col_map = {
+            'Bank': 'Kreditur', 'Kreditur': 'Kreditur',
+            'Rate': 'Lending_Rate', 'Lending Rate': 'Lending_Rate',
+            'Sisa Outstanding': 'Outstanding', 'Outstanding': 'Outstanding',
+            'Pembayaran Pokok': 'Bayar_Pokok', 'Bayar Pokok': 'Bayar_Pokok'
         }
-        for old, new in l_map.items():
+        for old, new in l_col_map.items():
             if old in df_l.columns and new not in df_l.columns:
                 df_l.rename(columns={old: new}, inplace=True)
         
-        # Cleaning Funding
+        # Clean Funding Column names
         if 'Rate (%)' in df_f.columns: df_f.rename(columns={'Rate (%)': 'Rate'}, inplace=True)
         if 'Bank' in df_f.columns: df_f.rename(columns={'Bank': 'Kreditur'}, inplace=True)
         
+        # Apply Clean Numeric
         for c in ['Nominal', 'Rate']:
             if c in df_f.columns: df_f[c] = clean_numeric_robust(df_f[c])
         for c in ['Nominal', 'Lending_Rate', 'Outstanding', 'Bayar_Pokok']:
             if c in df_l.columns: df_l[c] = clean_numeric_robust(df_l[c])
             
-        def parse_date_logic(p):
+        # Parse Date Logic (IndexError Shield)
+        def safe_parse_date(p):
             p = str(p).replace('-', ' ').strip()
-            if not p or p == 'nan' or ' ' not in p: return pd.Series([0, "2026"])
-            pts = p.split(' ')
-            return pd.Series([MONTH_MAP_REV.get(pts[0], 0), pts[1] if len(pts) > 1 else "2026"])
+            if not p or p == 'nan' or ' ' not in p: 
+                # Coba liat kalo cuma bulan aja
+                m_idx = MONTH_MAP_REV.get(p, 0)
+                return pd.Series([m_idx, "2026"])
+            pts = p.split()
+            m_idx = MONTH_MAP_REV.get(pts[0], 0)
+            y_val = pts[1] if len(pts) > 1 else "2026"
+            return pd.Series([m_idx, y_val])
 
         if 'Periode' in df_f.columns:
-            df_f[['m_idx', 'year_val']] = df_f['Periode'].apply(parse_date_logic)
+            df_f[['m_idx', 'year_val']] = df_f['Periode'].apply(safe_parse_date)
+        if 'Periode' in df_l.columns:
+            df_l[['m_idx', 'year_val']] = df_l['Periode'].apply(safe_parse_date)
         
         return df_f, df_l, None
     except Exception as e: return pd.DataFrame(), pd.DataFrame(), str(e)
@@ -98,7 +110,7 @@ s_m_idx, s_y_val = sel_date.month, str(sel_date.year)
 s_m_name = MONTH_MAP_ID[s_m_idx]
 
 df_f_raw, df_l_raw, err = load_gsheets_data()
-if err: st.error(f"Error Loading: {err}"); st.stop()
+if err: st.error(f"Error Database: {err}"); st.stop()
 
 st.sidebar.markdown("---")
 st.sidebar.header("⚙️ Market Intelligence")
@@ -141,11 +153,11 @@ with tab1:
         with v2: st.plotly_chart(px.pie(df_f, values='Nominal', names='Kreditur', hole=0.5, title="Nominal Mix"), use_container_width=True)
 
 # ==========================================
-# TAB 2: LENDING (ULTIMATE FIX)
+# TAB 2: LENDING (ULTRA PRECISION)
 # ==========================================
 with tab2:
-    actual_p = df_f['Periode'].iloc[0] if not df_f.empty else f"{s_m_name} {s_y_val}"
-    df_l = df_l_raw[df_l_raw['Periode'] == actual_p].copy()
+    # Filter Lending pake m_idx dan year_val biar presisi
+    df_l = df_l_raw[(df_l_raw['m_idx'] == s_m_idx) & (df_l_raw['year_val'] == s_y_val)].copy()
 
     if not df_l.empty:
         # Metrik Utama
@@ -162,14 +174,14 @@ with tab2:
             with bank_cols[i]:
                 st.image(get_bank_logo(b_name), width=70)
                 b_sub = df_l[df_l['Kreditur'] == b_name]
-                # Safe Value Access
-                val_rate = b_sub['Lending_Rate'].mean()
-                val_out = b_sub['Outstanding'].sum()
-                val_pay = b_sub['Bayar_Pokok'].sum()
                 st.write(f"**{b_name}**")
-                st.write(f"Rate: `{val_rate:.2f}%`")
-                st.write(f"Sisa: \nRp {val_out:,.0f}")
-                st.write(f"Bayar Pokok: \nRp {val_pay:,.0f}")
+                # Safe Values
+                v_rate = b_sub['Lending_Rate'].mean()
+                v_out = b_sub['Outstanding'].sum()
+                v_pay = b_sub['Bayar_Pokok'].sum()
+                st.write(f"Rate: `{v_rate:.2f}%`")
+                st.write(f"Sisa: \nRp {v_out:,.0f}")
+                st.write(f"Bayar Pokok: \nRp {v_pay:,.0f}")
 
         st.divider()
         st.subheader(f"📊 Breakdown Pembayaran Pokok per Bank - {s_m_name}")
@@ -182,7 +194,7 @@ with tab2:
         )
         st.plotly_chart(fig_l_bar, use_container_width=True)
     else:
-        st.warning(f"Data Lending untuk {s_m_name} {s_y_val} tidak ditemukan.")
+        st.warning(f"Data Lending untuk {s_m_name} {s_y_val} belum ada di GSheets.")
 
 # ==========================================
 # TAB 3: ALM RESUME
@@ -195,7 +207,7 @@ with tab3:
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Interest Revenue", f"Rp {total_mtd_rev:,.0f}")
         c2.metric("Cash Out (Pokok)", f"Rp {out_p:,.0f}")
-        c3.metric("Net Margin Gap", f"Rp {total_mtd_rev - out_p:,.0f}")
+        c3.metric("Net Flow Gap", f"Rp {total_mtd_rev - out_p:,.0f}")
         c4.metric("ICR Strength", f"{(total_mtd_rev/out_p if out_p > 0 else 0):.2f}x")
         st.divider()
         plot_df = hist_m.copy()
