@@ -63,15 +63,14 @@ def load_gsheets_data():
             if 'bank' in norm or 'kreditur' in norm: return 'Bank'
             if 'nominal' in norm: return 'Nominal'
             if 'jatuh' in norm and 'tempo' in norm: return 'Jatuh_Tempo'
-            if 'bilyet' in norm or 'rekening' in norm: return 'No_Bilyet' # <-- RADAR BILYET
+            if 'bilyet' in norm or 'rekening' in norm: return 'No_Bilyet'
             return str(c).strip()
         
         df_f.columns = [map_funding_cols(c) for c in df_f.columns]
 
-        # PENGAMAN KOLOM BILYET
         if 'No_Bilyet' not in df_f.columns:
             df_f['No_Bilyet'] = "-"
-        df_f['No_Bilyet'] = df_f['No_Bilyet'].astype(str).replace('nan', '-')
+        df_f['No_Bilyet'] = df_f['No_Bilyet'].fillna("-").astype(str).replace('nan', '-')
 
         for col in ['Nominal', 'Rate']:
             if col in df_f.columns: df_f[col] = df_f[col].apply(clean_numeric_robust)
@@ -164,7 +163,7 @@ st.title(f"🚢 ASDP Treasury & ALM Master Command Center")
 tab1, tab2, tab3 = st.tabs(["💰 Modul 1: Funding", "📈 Modul 2: Lending", "📊 Modul 3: ALM Resume"])
 
 # ==========================================
-# TAB 1: FUNDING (BILYET TRACKER ADDED)
+# TAB 1: FUNDING (BULLETPROOF BILYET TRACKER)
 # ==========================================
 with tab1:
     df_f = df_f_raw[(df_f_raw['m_idx'] == s_m_idx) & (df_f_raw['year_val'] == s_y_val)].copy()
@@ -187,8 +186,10 @@ with tab1:
             with st.container(height=180):
                 df_loss = df_f[(df_f['Rate'] * 0.8) < net_sbn]
                 if not df_loss.empty:
-                    # Menambahkan Nomor Bilyet ke tampilan Alert
-                    for _, row in df_loss.iterrows(): st.error(f"**{row['Bank']}** | Bilyet: `{row['No_Bilyet']}` | Yield Net: `{(row['Rate']*0.8):.2f}%`")
+                    # Menggunakan .get() agar ANTI ERROR (Bulletproof)
+                    for _, row in df_loss.iterrows(): 
+                        b_val = row.get('No_Bilyet', '-')
+                        st.error(f"**{row.get('Bank', 'Unknown')}** | Bilyet: `{b_val}` | Yield Net: `{(row.get('Rate', 0)*0.8):.2f}%`")
                 else: st.success("Strategi Penempatan Optimal.")
         with c_al2:
             st.subheader("⏳ Maturity Watch (H-14)")
@@ -196,8 +197,10 @@ with tab1:
                 today = datetime.now()
                 df_soon = df_f[(df_f['Jatuh_Tempo'] >= today) & (df_f['Jatuh_Tempo'] <= today + timedelta(days=14))]
                 if not df_soon.empty:
-                    # Menambahkan Nomor Bilyet ke tampilan Maturity
-                    for _, row in df_soon.iterrows(): st.warning(f"**{row['Bank']}** | Bilyet: `{row['No_Bilyet']}` | JT: `{row['Jatuh_Tempo'].strftime('%d-%m-%Y')}`")
+                    # Menggunakan .get() agar ANTI ERROR (Bulletproof)
+                    for _, row in df_soon.iterrows(): 
+                        b_val = row.get('No_Bilyet', '-')
+                        st.warning(f"**{row.get('Bank', 'Unknown')}** | Bilyet: `{b_val}` | JT: `{row['Jatuh_Tempo'].strftime('%d-%m-%Y')}`")
                 else: st.info("Tidak ada penempatan jatuh tempo dekat.")
 
         st.divider()
@@ -214,4 +217,94 @@ with tab1:
         tot_potensi_obligasi = df_proj['Potensi_Obligasi'].sum()
 
         c_res1, c_res2 = st.columns(2)
-        c_res1.metric("Proyeksi Tamb
+        c_res1.metric("Proyeksi Tambahan jika ke SBN", f"Rp {tot_potensi_sbn:,.0f}")
+        c_res2.metric("Proyeksi Tambahan jika ke Obligasi/Sukuk", f"Rp {tot_potensi_obligasi:,.0f}")
+
+        st.divider()
+        v1, v2 = st.columns([1.2, 1])
+        with v1: st.plotly_chart(px.bar(df_f.groupby('Bank')['Rev_MtD'].sum().reset_index(), x='Bank', y='Rev_MtD', title="Revenue per Bank (MtD)", text_auto=',.0f', color='Bank'), use_container_width=True)
+        with v2: st.plotly_chart(px.pie(df_f, values='Nominal', names='Bank', hole=0.5, title="Nominal Mix Placement"), use_container_width=True)
+    else:
+        st.warning(f"Data Funding untuk {s_m_name} {s_y_val} tidak ditemukan.")
+
+# ==========================================
+# TAB 2: LENDING (LOCKED)
+# ==========================================
+with tab2:
+    df_l = df_l_raw[(df_l_raw['m_idx'] == s_m_idx) & (df_l_raw['year_val'] == s_y_val)].copy()
+    ytd_mask_l = (df_l_raw['year_val'] == s_y_val) & (df_l_raw['m_idx'] <= s_m_idx) & (df_l_raw['m_idx'] > 0)
+    df_l_ytd = df_l_raw[ytd_mask_l].copy()
+
+    if not df_l.empty:
+        is_bunga_mtd = df_l['Tipe'].astype(str).str.contains('bunga|margin|fee', case=False, na=False)
+        mtd_bunga = df_l.loc[is_bunga_mtd, 'Nominal_Lending'].sum()
+        mtd_total = df_l['Nominal_Lending'].sum()
+        mtd_pokok = mtd_total - mtd_bunga
+
+        is_bunga_ytd = df_l_ytd['Tipe'].astype(str).str.contains('bunga|margin|fee', case=False, na=False)
+        ytd_bunga = df_l_ytd.loc[is_bunga_ytd, 'Nominal_Lending'].sum()
+        ytd_total = df_l_ytd['Nominal_Lending'].sum()
+        ytd_pokok = ytd_total - ytd_bunga
+
+        total_out = df_l.groupby('Kreditur')['Outstanding'].max().sum()
+        avg_rt = np.nan_to_num(df_l['Lending_Rate'].mean())
+
+        l1, l2, l3, l4 = st.columns(4)
+        l1.metric("Total Sisa Outstanding", f"Rp {total_out:,.0f}")
+        l2.metric(f"MtD Bayar ({s_m_name})", f"Rp {mtd_total:,.0f}")
+        l3.metric(f"YtD Bayar (Jan-{s_m_name[:3]})", f"Rp {ytd_total:,.0f}")
+        l4.metric("Avg Yield Lending", f"{avg_rt:.2f}%")
+
+        st.divider()
+        today = datetime.now()
+        df_soon_l = df_l_raw[(df_l_raw['Jatuh_Tempo'] >= today) & (df_l_raw['Jatuh_Tempo'] <= today + timedelta(days=14))]
+        if not df_soon_l.empty:
+            st.error("⏳ **WARNING: Jatuh Tempo Tagihan Lending (H-14)**")
+            df_soon_agg = df_soon_l.groupby(['Kreditur', 'Jatuh_Tempo'])['Nominal_Lending'].sum().reset_index()
+            for _, row in df_soon_agg.iterrows(): st.warning(f"🏦 **{row['Kreditur']}** | JT: `{row['Jatuh_Tempo'].strftime('%d-%m-%Y')}` | Tagihan: **Rp {row['Nominal_Lending']:,.0f}**")
+            st.divider()
+
+        st.subheader("🏦 Rincian Kewajiban per Kreditur")
+        k_list = [k for k in df_l['Kreditur'].unique() if str(k) != '0.0' and str(k) != 'Unknown']
+        if k_list:
+            bank_cols = st.columns(len(k_list))
+            plot_data = []
+            for i, b_name in enumerate(k_list):
+                with bank_cols[i]:
+                    b_sub = df_l[df_l['Kreditur'] == b_name]
+                    v_rate = np.nan_to_num(b_sub['Lending_Rate'].mean())
+                    v_out = b_sub['Outstanding'].max()
+                    v_bunga = b_sub.loc[b_sub['Tipe'].astype(str).str.contains('bunga|margin|fee', case=False, na=False), 'Nominal_Lending'].sum()
+                    v_pokok = b_sub['Nominal_Lending'].sum() - v_bunga
+                    plot_data.append({'Kreditur': b_name, 'Pokok': v_pokok, 'Bunga': v_bunga})
+                    st.markdown(f"### 🏢 **{b_name}**")
+                    st.caption(f"Rate: {v_rate:.2f}%")
+                    st.markdown(f"* Sisa: Rp {v_out:,.0f}\n* Pokok: Rp {v_pokok:,.0f}\n* Bunga: Rp {v_bunga:,.0f}\n---\n**Total: Rp {(v_pokok + v_bunga):,.0f}**")
+            st.divider()
+            df_plot = pd.DataFrame(plot_data)
+            st.plotly_chart(px.bar(df_plot, x='Kreditur', y=['Pokok', 'Bunga'], title="Breakdown Pembayaran Pokok vs Bunga", barmode='group', color_discrete_sequence=['#1f77b4', '#ff7f0e']), use_container_width=True)
+    else:
+        st.warning(f"Data Lending untuk {s_m_name} {s_y_val} tidak ditemukan. Cek penulisan Periode di GSheet.")
+
+# ==========================================
+# TAB 3: ALM RESUME
+# ==========================================
+with tab3:
+    st.header(f"📊 ALM Strategic Intelligence - {s_m_name}")
+    if not df_f.empty:
+        out_total = df_l['Nominal_Lending'].sum() if not df_l.empty else 0
+        total_mtd_rev = (df_f['Nominal'] * (df_f['Rate'] / 100) / 12).sum()
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Interest Revenue", f"Rp {total_mtd_rev:,.0f}")
+        c2.metric("Total Cash Out (P+I)", f"Rp {out_total:,.0f}")
+        c3.metric("Net Flow Gap", f"Rp {total_mtd_rev - out_total:,.0f}")
+        c4.metric("ICR Strength", f"{(total_mtd_rev/out_total if out_total > 0 else 0):.2f}x")
+        st.divider()
+        plot_df = hist_m.copy()
+        plot_df['Bareksa'] = plot_df['SBN_10Y'] * (bareksa_val / (sbn_val if sbn_val != 0 else 1))
+        plot_df['PHEI'] = plot_df['SBN_10Y'] * (criec_val / (sbn_val if sbn_val != 0 else 1))
+        f_alm = go.Figure()
+        f_alm.add_trace(go.Scatter(x=plot_df.index, y=plot_df['SBN_10Y'], name='SBN 10Y'))
+        f_alm.add_trace(go.Scatter(x=plot_df.index, y=plot_df['Bareksa'], name='Bareksa MM', line=dict(dash='dot')))
+        f_alm.add_trace(go.Scatter(x=plot_df.index, y=plot_df['PHEI'], name='PHEI Bond Index', line=dict(width=3)))
+        st.plotly_chart(f_alm, use_container_width=True)
