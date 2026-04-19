@@ -36,13 +36,24 @@ def load_gsheets_data():
         df_f = pd.read_csv(base_url + "Funding")
         df_l = pd.read_csv(base_url + "Lending")
         
-        # Super Cleaning Kolom (Anti-KeyError)
+        # Super Cleaning Kolom
         df_f.columns = [c.strip() for c in df_f.columns]
         df_l.columns = [c.strip() for c in df_l.columns]
         
+        # Funding Renaming
         if 'Rate (%)' in df_f.columns: df_f.rename(columns={'Rate (%)': 'Rate'}, inplace=True)
         if 'Bank' in df_f.columns: df_f.rename(columns={'Bank': 'Kreditur'}, inplace=True)
         
+        # Lending Renaming (Anti-Error jika user hapus karakter tertentu)
+        l_rename = {
+            'Lending Rate': 'Lending_Rate (%)',
+            'Lending Rate (%)': 'Lending_Rate (%)',
+            'Rate Lending': 'Lending_Rate (%)'
+        }
+        for k, v in l_rename.items():
+            if k in df_l.columns and v not in df_l.columns:
+                df_l.rename(columns={k: v}, inplace=True)
+
         for c in ['Nominal', 'Rate']:
             if c in df_f.columns: df_f[c] = clean_numeric_robust(df_f[c])
         for c in ['Nominal', 'Cost_of_Fund (%)', 'Lending_Rate (%)']:
@@ -94,7 +105,7 @@ sbn_val = st.sidebar.number_input("SBN 10Y Benchmark (Live)", value=round(float(
 bareksa_val = st.sidebar.number_input("Bareksa (Money Market %)", value=4.75, step=0.01)
 criec_val = st.sidebar.number_input("PHEI CRIEC Index (%)", value=7.20, step=0.01)
 
-# TOMBOL AKSES CEPAT (TAMBAHAN LINK GSHEETS)
+# TOMBOL AKSES CEPAT (INCLUDING GSHEETS)
 st.sidebar.link_button("🌐 Bareksa Data", "https://www.bareksa.com/id/data", use_container_width=True)
 st.sidebar.link_button("📉 PHEI (Informasi Efek)", "https://www.phei.co.id/Data/Informasi-Efek", use_container_width=True)
 st.sidebar.link_button("📊 Data Source (Google Sheets)", "https://docs.google.com/spreadsheets/d/182zKZj0Kr56yqOGM_XW2W3Q6fhaOSo8z9TIbjC_JxxY", use_container_width=True)
@@ -109,7 +120,7 @@ st.title(f"🚢 ASDP Treasury & ALM Master Command Center")
 tab1, tab2, tab3 = st.tabs(["💰 Modul 1: Funding", "📈 Modul 2: Lending", "📊 Modul 3: ALM Resume"])
 
 # ==========================================
-# TAB 1: FUNDING (LOCKED)
+# TAB 1: FUNDING (LOCKED & SECURE)
 # ==========================================
 with tab1:
     df_f = df_f_raw[(df_f_raw['m_idx'] == s_m_idx) & (df_f_raw['year_val'] == s_y_val)].copy()
@@ -119,7 +130,6 @@ with tab1:
         df_f['Rev_MtD'] = (df_f['Nominal'] * (df_f['Rate'] / 100)) / 12
         total_mtd = df_f['Rev_MtD'].sum()
         
-        # Perhitungan YtD Akurat
         ytd_mask = (df_f_raw['year_val'] == s_y_val) & (df_f_raw['m_idx'] <= s_m_idx)
         df_ytd = df_f_raw[ytd_mask].copy()
         df_ytd['Rev_Line'] = (df_ytd['Nominal'] * (df_ytd['Rate'] / 100)) / 12
@@ -164,7 +174,7 @@ with tab1:
         st.warning(f"Data untuk {s_m_name} {s_y_val} belum ada di database.")
 
 # ==========================================
-# TAB 2: LENDING (LOCKED)
+# TAB 2: LENDING (FIXED KEYERROR & MISSING COL)
 # ==========================================
 with tab2:
     actual_p = df_f['Periode'].iloc[0] if not df_f.empty else ""
@@ -176,10 +186,15 @@ with tab2:
     if not df_l.empty:
         l1, l2, l3 = st.columns(3)
         l1.metric("Total Cash Out Debt", f"Rp {df_l['Nominal'].sum():,.0f}")
-        l2.metric("Avg. Yield Lending", f"{df_l['Lending_Rate (%)'].mean():.2f}%")
-        l3.metric("Kreditur Utama", df_l.groupby('Kreditur')['Nominal'].sum().idxmax())
+        
+        # FIX: Check if column exists before mean()
+        avg_lending = df_l['Lending_Rate (%)'].mean() if 'Lending_Rate (%)' in df_l.columns else 0
+        l2.metric("Avg. Yield Lending", f"{avg_lending:.2f}%")
+        
+        l3.metric("Kreditur Utama", df_l.groupby('Kreditur')['Nominal'].sum().idxmax() if 'Kreditur' in df_l.columns else "N/A")
         st.divider()
-        st.plotly_chart(px.bar(df_l.groupby('Kreditur')['Nominal'].sum().reset_index().sort_values('Nominal', ascending=False), x='Kreditur', y='Nominal', text_auto=',.0f', color='Kreditur', title="Cash Out per Bank"), use_container_width=True)
+        if 'Kreditur' in df_l.columns and 'Nominal' in df_l.columns:
+            st.plotly_chart(px.bar(df_l.groupby('Kreditur')['Nominal'].sum().reset_index().sort_values('Nominal', ascending=False), x='Kreditur', y='Nominal', text_auto=',.0f', color='Kreditur', title="Cash Out per Bank"), use_container_width=True)
     else:
         st.info("Pilih periode di kalender untuk melihat data Lending.")
 
