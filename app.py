@@ -32,8 +32,9 @@ def get_bank_logo(bank_name):
 # --- 3. ENGINE DATA (EXTRA ROBUST) ---
 def clean_numeric_robust(series):
     def process_val(val):
+        if pd.isna(val): return "0"
         val = str(val).strip().replace('Rp', '').replace('%', '').replace(' ', '').replace(',', '')
-        if not val or val == 'nan' or val == 'None' or val == '': return "0"
+        if not val or val.lower() == 'nan': return "0"
         if '.' in val and len(val.split('.')[-1]) == 3: val = val.replace('.', '')
         return val
     return pd.to_numeric(series.apply(process_val), errors='coerce').fillna(0)
@@ -43,26 +44,22 @@ def load_gsheets_data():
     sheet_id = "182zKZj0Kr56yqOGM_XW2W3Q6fhaOSo8z9TIbjC_JxxY"
     base_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet="
     try:
-        df_f = pd.read_csv(base_url + "Funding")
-        df_l = pd.read_csv(base_url + "Lending")
+        df_f = pd.read_csv(base_url + "Funding").dropna(how='all')
+        df_l = pd.read_csv(base_url + "Lending").dropna(how='all')
         
-        # Super Clean Kolom
         df_f.columns = [c.strip() for c in df_f.columns]
         df_l.columns = [c.strip() for c in df_l.columns]
         
-        # SMART MAPPING LENDING (Cari kolom yang mirip-mirip)
+        # SMART MAPPING LENDING
         l_map = {
-            'Bank': 'Kreditur', 'Kreditur': 'Kreditur',
-            'Rate': 'Lending_Rate', 'Lending Rate': 'Lending_Rate', 'Bunga': 'Lending_Rate',
-            'Sisa Outstanding': 'Outstanding', 'Outstanding': 'Outstanding',
-            'Pembayaran Pokok': 'Bayar_Pokok', 'Pokok': 'Bayar_Pokok', 'Bayar Pokok': 'Bayar_Pokok'
+            'Bank': 'Kreditur', 'Rate': 'Lending_Rate', 'Lending Rate': 'Lending_Rate',
+            'Sisa Outstanding': 'Outstanding', 'Pembayaran Pokok': 'Bayar_Pokok'
         }
+        for old, new in l_map.items():
+            if old in df_l.columns and new not in df_l.columns:
+                df_l.rename(columns={old: new}, inplace=True)
         
-        for old_c, new_c in l_map.items():
-            if old_c in df_l.columns and new_c not in df_l.columns:
-                df_l.rename(columns={old_c: new_c}, inplace=True)
-        
-        # Funding Clean
+        # Cleaning Funding
         if 'Rate (%)' in df_f.columns: df_f.rename(columns={'Rate (%)': 'Rate'}, inplace=True)
         if 'Bank' in df_f.columns: df_f.rename(columns={'Bank': 'Kreditur'}, inplace=True)
         
@@ -72,19 +69,14 @@ def load_gsheets_data():
             if c in df_l.columns: df_l[c] = clean_numeric_robust(df_l[c])
             
         def parse_date_logic(p):
-            p_clean = str(p).replace('-', ' ').strip()
-            if not p_clean or p_clean == 'nan': return pd.Series([0, "2026"])
-            pts = p_clean.split(' ')
-            m_idx = MONTH_MAP_REV.get(pts[0], 0)
-            y_val = pts[1] if len(pts) > 1 else "2026"
-            return pd.Series([m_idx, y_val])
+            p = str(p).replace('-', ' ').strip()
+            if not p or p == 'nan' or ' ' not in p: return pd.Series([0, "2026"])
+            pts = p.split(' ')
+            return pd.Series([MONTH_MAP_REV.get(pts[0], 0), pts[1] if len(pts) > 1 else "2026"])
 
         if 'Periode' in df_f.columns:
             df_f[['m_idx', 'year_val']] = df_f['Periode'].apply(parse_date_logic)
         
-        for df in [df_f, df_l]:
-            if 'Jatuh_Tempo' in df.columns: 
-                df['Jatuh_Tempo'] = pd.to_datetime(df['Jatuh_Tempo'], dayfirst=True, errors='coerce')
         return df_f, df_l, None
     except Exception as e: return pd.DataFrame(), pd.DataFrame(), str(e)
 
@@ -94,8 +86,7 @@ def get_market_history():
         data = yf.Ticker("ID10Y=F").history(period="6mo")
         if not data.empty: return data[['Close']].rename(columns={'Close': 'SBN_10Y'}).copy()
     except: pass
-    dates = pd.date_range(end=datetime.now(), periods=180)
-    return pd.DataFrame({'SBN_10Y': np.linspace(6.5, 6.8, 180)}, index=dates).copy()
+    return pd.DataFrame({'SBN_10Y': [6.6]}, index=[datetime.now()])
 
 # --- 4. SIDEBAR (LOCKED) ---
 logo_path = "ferry.png"
@@ -150,32 +141,32 @@ with tab1:
         with v2: st.plotly_chart(px.pie(df_f, values='Nominal', names='Kreditur', hole=0.5, title="Nominal Mix"), use_container_width=True)
 
 # ==========================================
-# TAB 2: LENDING (FIXED ERROR & LOGO)
+# TAB 2: LENDING (ULTIMATE FIX)
 # ==========================================
 with tab2:
-    actual_p_str = df_f['Periode'].iloc[0] if not df_f.empty else f"{s_m_name} {s_y_val}"
-    df_l = df_l_raw[df_l_raw['Periode'] == actual_p_str].copy()
+    actual_p = df_f['Periode'].iloc[0] if not df_f.empty else f"{s_m_name} {s_y_val}"
+    df_l = df_l_raw[df_l_raw['Periode'] == actual_p].copy()
 
     if not df_l.empty:
-        # Metrik Utama (Gaya Modul 1)
+        # Metrik Utama
         l1, l2, l3 = st.columns(3)
         l1.metric("Total Sisa Outstanding", f"Rp {df_l['Outstanding'].sum():,.0f}")
         l2.metric("Avg Yield Lending (Rate)", f"{df_l['Lending_Rate'].mean():.2f}%")
         l3.metric("Total Pembayaran Pokok", f"Rp {df_l['Bayar_Pokok'].sum():,.0f}")
 
         st.divider()
-        st.subheader("🏦 Detail Kreditur & Pokok")
+        st.subheader("🏦 Detail Kreditur & Pembayaran")
         k_list = df_l['Kreditur'].unique()
         bank_cols = st.columns(len(k_list))
         for i, b_name in enumerate(k_list):
             with bank_cols[i]:
                 st.image(get_bank_logo(b_name), width=70)
                 b_sub = df_l[df_l['Kreditur'] == b_name]
-                st.write(f"**{b_name}**")
-                # Fix AttributeError iloc
-                val_rate = b_sub['Lending_Rate'].values[0] if not b_sub.empty else 0
+                # Safe Value Access
+                val_rate = b_sub['Lending_Rate'].mean()
                 val_out = b_sub['Outstanding'].sum()
                 val_pay = b_sub['Bayar_Pokok'].sum()
+                st.write(f"**{b_name}**")
                 st.write(f"Rate: `{val_rate:.2f}%`")
                 st.write(f"Sisa: \nRp {val_out:,.0f}")
                 st.write(f"Bayar Pokok: \nRp {val_pay:,.0f}")
@@ -185,13 +176,13 @@ with tab2:
         fig_l_bar = px.bar(
             df_l.groupby('Kreditur')['Bayar_Pokok'].sum().reset_index(),
             x='Kreditur', y='Bayar_Pokok',
-            title="Pembayaran Pokok per Kreditur",
+            title="Pembayaran Pokok per Bank",
             text_auto=',.0f', color='Kreditur',
             color_discrete_sequence=px.colors.qualitative.Pastel
         )
         st.plotly_chart(fig_l_bar, use_container_width=True)
     else:
-        st.warning(f"Data Lending untuk {s_m_name} {s_y_val} belum ada di GSheets.")
+        st.warning(f"Data Lending untuk {s_m_name} {s_y_val} tidak ditemukan.")
 
 # ==========================================
 # TAB 3: ALM RESUME
@@ -204,7 +195,7 @@ with tab3:
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Interest Revenue", f"Rp {total_mtd_rev:,.0f}")
         c2.metric("Cash Out (Pokok)", f"Rp {out_p:,.0f}")
-        c3.metric("Net Flow Gap", f"Rp {total_mtd_rev - out_p:,.0f}")
+        c3.metric("Net Margin Gap", f"Rp {total_mtd_rev - out_p:,.0f}")
         c4.metric("ICR Strength", f"{(total_mtd_rev/out_p if out_p > 0 else 0):.2f}x")
         st.divider()
         plot_df = hist_m.copy()
