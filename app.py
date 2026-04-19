@@ -6,6 +6,7 @@ import plotly.graph_objects as go
 import os
 import numpy as np
 from datetime import datetime, timedelta
+import streamlit.components.v1 as components # Tambahan modul untuk Jam Realtime
 
 # --- 1. KONFIGURASI HALAMAN ---
 st.set_page_config(page_title="ASDP ALM Strategic Command", layout="wide", page_icon="🚢")
@@ -103,9 +104,30 @@ def get_market_history():
     except: pass
     return pd.DataFrame({'SBN_10Y': [6.6]}, index=[datetime.now()])
 
-# --- 4. SIDEBAR (LOCKED) ---
+# --- 4. SIDEBAR (REALTIME CLOCK ADDED) ---
 logo_path = "ferry.png"
 if os.path.exists(logo_path): st.sidebar.image(logo_path, use_container_width=True)
+
+# WIDGET JAM REALTIME (Menggunakan JavaScript agar berdetak tanpa lag)
+with st.sidebar:
+    clock_html = """
+    <div style="text-align: center; background-color: #f0f2f6; padding: 10px; border-radius: 8px; border: 1px solid #ddd; margin-bottom: 10px;">
+        <p id="clock" style="font-family: 'Courier New', Courier, monospace; font-size: 18px; font-weight: bold; color: #1f77b4; margin: 0;"></p>
+    </div>
+    <script>
+        function updateTime() {
+            var now = new Date();
+            var options = { weekday: 'long', year: 'numeric', month: 'short', day: 'numeric' };
+            var dateStr = now.toLocaleDateString('id-ID', options);
+            var timeStr = now.toLocaleTimeString('id-ID', { hour12: false });
+            document.getElementById('clock').innerHTML = dateStr + '<br>' + timeStr + ' WIB';
+        }
+        setInterval(updateTime, 1000);
+        updateTime();
+    </script>
+    """
+    components.html(clock_html, height=75)
+
 st.sidebar.markdown("---")
 st.sidebar.header("📅 Periode Analisis")
 sel_date = st.sidebar.date_input("Pilih Bulan & Tahun:", value=datetime(2026, 3, 1))
@@ -138,7 +160,7 @@ st.title(f"🚢 ASDP Treasury & ALM Master Command Center")
 tab1, tab2, tab3 = st.tabs(["💰 Modul 1: Funding", "📈 Modul 2: Lending", "📊 Modul 3: ALM Resume"])
 
 # ==========================================
-# TAB 1: FUNDING (EXECUTIVE SUMMARY)
+# TAB 1: FUNDING (LOCKED)
 # ==========================================
 with tab1:
     df_f = df_f_raw[(df_f_raw['m_idx'] == s_m_idx) & (df_f_raw['year_val'] == s_y_val)].copy()
@@ -155,7 +177,6 @@ with tab1:
         m4.metric("SBN Net Benchmark", f"{net_sbn:.2f}%")
         
         st.divider()
-        # ALERT SECTION
         c_al1, c_al2 = st.columns(2)
         with c_al1:
             st.subheader("🚩 Spread Alert (vs SBN)")
@@ -174,18 +195,14 @@ with tab1:
                 else: st.info("Tidak ada penempatan jatuh tempo dekat.")
 
         st.divider()
-        
-        # RESUME PROYEKSI (EXECUTIVE SUMMARY - TOTAL ONLY)
         st.subheader("📊 Resume Proyeksi Tambahan (Per Bulan)")
         df_proj = df_f.copy()
         df_proj['Yield_Net'] = df_proj['Rate'] * 0.8
         
-        # Total SBN
         df_proj['Gap_SBN'] = net_sbn - df_proj['Yield_Net']
         df_proj['Potensi_SBN'] = (df_proj['Gap_SBN'] / 100) * df_proj['Nominal'] / 12
         tot_potensi_sbn = df_proj['Potensi_SBN'].sum()
         
-        # Total Obligasi / Sukuk
         df_proj['Gap_Obligasi'] = target_bond_net - df_proj['Yield_Net']
         df_proj['Potensi_Obligasi'] = (df_proj['Gap_Obligasi'] / 100) * df_proj['Nominal'] / 12
         tot_potensi_obligasi = df_proj['Potensi_Obligasi'].sum()
@@ -195,8 +212,6 @@ with tab1:
         c_res2.metric("Proyeksi Tambahan jika ke Obligasi/Sukuk", f"Rp {tot_potensi_obligasi:,.0f}")
 
         st.divider()
-        
-        # CHARTS
         v1, v2 = st.columns([1.2, 1])
         with v1: st.plotly_chart(px.bar(df_f.groupby('Bank')['Rev_MtD'].sum().reset_index(), x='Bank', y='Rev_MtD', title="Revenue per Bank (MtD)", text_auto=',.0f', color='Bank'), use_container_width=True)
         with v2: st.plotly_chart(px.pie(df_f, values='Nominal', names='Bank', hole=0.5, title="Nominal Mix Placement"), use_container_width=True)
@@ -204,7 +219,7 @@ with tab1:
         st.warning(f"Data Funding untuk {s_m_name} {s_y_val} tidak ditemukan.")
 
 # ==========================================
-# TAB 2: LENDING (LOCKED & SECURED)
+# TAB 2: LENDING (LOCKED)
 # ==========================================
 with tab2:
     df_l = df_l_raw[(df_l_raw['m_idx'] == s_m_idx) & (df_l_raw['year_val'] == s_y_val)].copy()
