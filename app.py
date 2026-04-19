@@ -20,25 +20,20 @@ MONTH_MAP_REV = {
     'Januari': 1, 'Februari': 2, 'Maret': 3, 'April': 4, 'Mei': 5, 'Juni': 6, 'Juli': 7, 'Agustus': 8, 'September': 9, 'Oktober': 10, 'November': 11, 'Desember': 12
 }
 
-# --- 3. ENGINE DATA (PRECISION NUMERIC & STRICT INTEGER TYPE) ---
+# --- 3. ENGINE DATA (MATEMATIKA MURNI & JARING PENGAMAN) ---
 def clean_numeric_robust(val):
     if pd.isna(val): return 0.0
     val_str = str(val).strip().replace('Rp', '').replace('%', '').replace(' ', '')
     if not val_str or val_str.lower() == 'nan': return 0.0
     
-    if ',' in val_str and '.' in val_str:
-        val_str = val_str.replace('.', '').replace(',', '.')
-    elif ',' in val_str: 
-        val_str = val_str.replace(',', '.')
+    if ',' in val_str and '.' in val_str: val_str = val_str.replace('.', '').replace(',', '.')
+    elif ',' in val_str: val_str = val_str.replace(',', '.')
     elif '.' in val_str: 
         parts = val_str.split('.')
-        if len(parts[-1]) == 3:
-            val_str = val_str.replace('.', '')
+        if len(parts[-1]) == 3: val_str = val_str.replace('.', '')
             
-    try:
-        return float(val_str)
-    except:
-        return 0.0
+    try: return float(val_str)
+    except: return 0.0
 
 @st.cache_data(ttl=1)
 def load_gsheets_data():
@@ -57,7 +52,7 @@ def load_gsheets_data():
             if 'rate' in norm or 'suku' in norm: return 'Lending_Rate'
             if 'sisa' in norm or 'outstanding' in norm: return 'Outstanding'
             if 'tipe' in norm or 'jenis' in norm: return 'Tipe'
-            if 'nominal' in norm: return 'Nominal_Lending'
+            if 'nominal' in norm or 'pokok' in norm or 'jumlah' in norm: return 'Nominal_Lending'
             if 'jatuh' in norm and 'tempo' in norm: return 'Jatuh_Tempo'
             return str(c).strip()
 
@@ -72,6 +67,14 @@ def load_gsheets_data():
         
         df_f.columns = [map_funding_cols(c) for c in df_f.columns]
 
+        # Pagar Keamanan Kolom Tipe & Nominal
+        for req in ['Kreditur', 'Lending_Rate', 'Outstanding', 'Tipe', 'Nominal_Lending', 'Jatuh_Tempo']:
+            if req not in df_l.columns:
+                if req == 'Kreditur': df_l[req] = "Unknown"
+                elif req == 'Jatuh_Tempo': df_l[req] = pd.NaT
+                elif req == 'Tipe': df_l[req] = "Pokok"
+                else: df_l[req] = 0.0
+
         for col in ['Nominal', 'Rate']:
             if col in df_f.columns: df_f[col] = df_f[col].apply(clean_numeric_robust)
         for col in ['Lending_Rate', 'Outstanding', 'Nominal_Lending']:
@@ -80,19 +83,21 @@ def load_gsheets_data():
         if 'Jatuh_Tempo' in df_f.columns: df_f['Jatuh_Tempo'] = pd.to_datetime(df_f['Jatuh_Tempo'], dayfirst=True, errors='coerce')
         if 'Jatuh_Tempo' in df_l.columns: df_l['Jatuh_Tempo'] = pd.to_datetime(df_l['Jatuh_Tempo'], dayfirst=True, errors='coerce')
 
-        def safe_parse_date(p):
+        def safe_parse_month(p):
+            try: return int(MONTH_MAP_REV.get(str(p).replace('-', ' ').strip().split()[0], 0))
+            except: return 0
+            
+        def safe_parse_year(p):
             try:
-                p_str = str(p).replace('-', ' ').strip()
-                pts = p_str.split()
-                return pd.Series([int(MONTH_MAP_REV.get(pts[0], 0)), str(pts[1])])
-            except: return pd.Series([0, "2026"])
+                pts = str(p).replace('-', ' ').strip().split()
+                return int(pts[1]) if len(pts) > 1 else 2026
+            except: return 2026
 
-        df_f[['m_idx', 'year_val']] = df_f['Periode'].apply(safe_parse_date)
-        df_l[['m_idx', 'year_val']] = df_l['Periode'].apply(safe_parse_date)
+        df_f['m_idx'] = df_f['Periode'].apply(safe_parse_month)
+        df_f['year_val'] = df_f['Periode'].apply(safe_parse_year)
         
-        # SANGAT PENTING: Paksa kolom index bulan jadi format matematika murni (Integer)
-        df_f['m_idx'] = pd.to_numeric(df_f['m_idx'], errors='coerce').fillna(0).astype(int)
-        df_l['m_idx'] = pd.to_numeric(df_l['m_idx'], errors='coerce').fillna(0).astype(int)
+        df_l['m_idx'] = df_l['Periode'].apply(safe_parse_month)
+        df_l['year_val'] = df_l['Periode'].apply(safe_parse_year)
         
         return df_f, df_l, None
     except Exception as e:
@@ -112,7 +117,7 @@ if os.path.exists(logo_path): st.sidebar.image(logo_path, use_container_width=Tr
 st.sidebar.markdown("---")
 st.sidebar.header("📅 Periode Analisis")
 sel_date = st.sidebar.date_input("Pilih Bulan & Tahun:", value=datetime(2026, 3, 1))
-s_m_idx, s_y_val = int(sel_date.month), str(sel_date.year)
+s_m_idx, s_y_val = int(sel_date.month), int(sel_date.year)
 s_m_name = MONTH_MAP_ID[s_m_idx]
 
 df_f_raw, df_l_raw, err = load_gsheets_data()
@@ -138,7 +143,7 @@ st.title(f"🚢 ASDP Treasury & ALM Master Command Center")
 tab1, tab2, tab3 = st.tabs(["💰 Modul 1: Funding", "📈 Modul 2: Lending", "📊 Modul 3: ALM Resume"])
 
 # ==========================================
-# TAB 1: FUNDING (RESTORED PROJECTION)
+# TAB 1: FUNDING (BAR CHART NOMINAL + PROYEKSI)
 # ==========================================
 with tab1:
     df_f = df_f_raw[(df_f_raw['m_idx'] == s_m_idx) & (df_f_raw['year_val'] == s_y_val)].copy()
@@ -188,32 +193,34 @@ with tab1:
         )
 
         st.divider()
-        v1, v2 = st.columns([1.2, 1])
-        with v1: st.plotly_chart(px.bar(df_f.groupby('Kreditur')['Rev_MtD'].sum().reset_index(), x='Kreditur', y='Rev_MtD', title="Revenue per Bank (MtD)", text_auto=',.0f', color='Kreditur'), use_container_width=True)
-        with v2: st.plotly_chart(px.pie(df_f, values='Nominal', names='Kreditur', hole=0.5, title="Nominal Mix"), use_container_width=True)
+        # MENGUBAH PIE CHART MENJADI BAR CHART SESUAI REQUEST FOTO KIKO
+        v1, v2 = st.columns([1, 1])
+        with v1: st.plotly_chart(px.bar(df_f.groupby('Kreditur')['Nominal'].sum().reset_index(), x='Kreditur', y='Nominal', title="Eksposur Nominal Penempatan", text_auto=',.0f'), use_container_width=True)
+        with v2: st.plotly_chart(px.bar(df_f.groupby('Kreditur')['Rev_MtD'].sum().reset_index(), x='Kreditur', y='Rev_MtD', title="Revenue per Bank (MtD)", text_auto=',.0f', color='Kreditur'), use_container_width=True)
     else:
         st.warning(f"Data Funding untuk {s_m_name} {s_y_val} tidak ditemukan.")
 
 # ==========================================
-# TAB 2: LENDING (YTD FIX & MATEMATIKA MURNI)
+# TAB 2: LENDING (YTD FIX INT & NO DATA LOSS)
 # ==========================================
 with tab2:
     df_l = df_l_raw[(df_l_raw['m_idx'] == s_m_idx) & (df_l_raw['year_val'] == s_y_val)].copy()
     
-    # YTD MASK SEKARANG 100% AMAN (Int vs Int)
+    # MASKING YTD MATEMATIKA MURNI (Dijamin dari Januari sampai bulan yg dipilih)
     ytd_mask_l = (df_l_raw['year_val'] == s_y_val) & (df_l_raw['m_idx'] <= s_m_idx) & (df_l_raw['m_idx'] > 0)
     df_l_ytd = df_l_raw[ytd_mask_l].copy()
 
     if not df_l.empty:
-        # Kalkulasi MtD
-        mtd_pokok = df_l.loc[df_l['Tipe'].astype(str).str.contains('pokok', case=False, na=False), 'Nominal_Lending'].sum()
-        mtd_bunga = df_l.loc[df_l['Tipe'].astype(str).str.contains('bunga', case=False, na=False), 'Nominal_Lending'].sum()
-        mtd_total = mtd_pokok + mtd_bunga
+        # PENGAMANAN DATA: Bunga diambil, sisanya OTOMATIS Pokok biar grafik gak kosong
+        is_bunga_mtd = df_l['Tipe'].astype(str).str.contains('bunga|margin|fee', case=False, na=False)
+        mtd_bunga = df_l.loc[is_bunga_mtd, 'Nominal_Lending'].sum()
+        mtd_total = df_l['Nominal_Lending'].sum()
+        mtd_pokok = mtd_total - mtd_bunga # Selisihnya otomatis Pokok
 
-        # Kalkulasi YtD (FIXED)
-        ytd_pokok = df_l_ytd.loc[df_l_ytd['Tipe'].astype(str).str.contains('pokok', case=False, na=False), 'Nominal_Lending'].sum()
-        ytd_bunga = df_l_ytd.loc[df_l_ytd['Tipe'].astype(str).str.contains('bunga', case=False, na=False), 'Nominal_Lending'].sum()
-        ytd_total = ytd_pokok + ytd_bunga
+        is_bunga_ytd = df_l_ytd['Tipe'].astype(str).str.contains('bunga|margin|fee', case=False, na=False)
+        ytd_bunga = df_l_ytd.loc[is_bunga_ytd, 'Nominal_Lending'].sum()
+        ytd_total = df_l_ytd['Nominal_Lending'].sum()
+        ytd_pokok = ytd_total - ytd_bunga
 
         total_out = df_l.groupby('Kreditur')['Outstanding'].max().sum()
         avg_rt = np.nan_to_num(df_l['Lending_Rate'].mean())
@@ -235,7 +242,7 @@ with tab2:
                 st.warning(f"🏦 **{row['Kreditur']}** | JT: `{row['Jatuh_Tempo'].strftime('%d-%m-%Y')}` | Tagihan: **Rp {row['Nominal_Lending']:,.0f}**")
             st.divider()
 
-        # Rincian per Bank (NO LOGOS)
+        # RINCIAN TANPA LOGO (Lebih Bersih)
         st.subheader("🏦 Rincian Kewajiban per Kreditur")
         k_list = [k for k in df_l['Kreditur'].unique() if str(k) != '0.0' and str(k) != 'Unknown']
         if k_list:
@@ -246,18 +253,22 @@ with tab2:
                     b_sub = df_l[df_l['Kreditur'] == b_name]
                     v_rate = np.nan_to_num(b_sub['Lending_Rate'].mean())
                     v_out = b_sub['Outstanding'].max()
-                    v_pokok = b_sub.loc[b_sub['Tipe'].astype(str).str.contains('pokok', case=False, na=False), 'Nominal_Lending'].sum()
-                    v_bunga = b_sub.loc[b_sub['Tipe'].astype(str).str.contains('bunga', case=False, na=False), 'Nominal_Lending'].sum()
+                    
+                    # Logic Jaring Pengaman
+                    is_bnga = b_sub['Tipe'].astype(str).str.contains('bunga|margin|fee', case=False, na=False)
+                    v_bunga = b_sub.loc[is_bnga, 'Nominal_Lending'].sum()
+                    v_pokok = b_sub['Nominal_Lending'].sum() - v_bunga
+                    
                     plot_data.append({'Kreditur': b_name, 'Pokok': v_pokok, 'Bunga': v_bunga})
 
-                    st.markdown(f"### **{b_name}**")
+                    st.markdown(f"### 🏢 **{b_name}**")
                     st.caption(f"Rate: {v_rate:.2f}%")
                     st.markdown(f"""
-                    * **Sisa Outstanding:** Rp {v_out:,.0f}
-                    * **Bayar Pokok:** Rp {v_pokok:,.0f}
-                    * **Bayar Bunga:** Rp {v_bunga:,.0f}
+                    * **Sisa:** Rp {v_out:,.0f}
+                    * **Pokok:** Rp {v_pokok:,.0f}
+                    * **Bunga:** Rp {v_bunga:,.0f}
                     ---
-                    **Total Tagihan: Rp {(v_pokok + v_bunga):,.0f}**
+                    **Total: Rp {(v_pokok + v_bunga):,.0f}**
                     """)
             st.divider()
             df_plot = pd.DataFrame(plot_data)
