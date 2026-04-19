@@ -20,19 +20,17 @@ MONTH_MAP_REV = {
     'Januari': 1, 'Februari': 2, 'Maret': 3, 'April': 4, 'Mei': 5, 'Juni': 6, 'Juli': 7, 'Agustus': 8, 'September': 9, 'Oktober': 10, 'November': 11, 'Desember': 12
 }
 
-# --- 3. ENGINE DATA (PRECISION NUMERIC) ---
+# --- 3. ENGINE DATA (PRECISION NUMERIC & STRICT INTEGER TYPE) ---
 def clean_numeric_robust(val):
     if pd.isna(val): return 0.0
     val_str = str(val).strip().replace('Rp', '').replace('%', '').replace(' ', '')
     if not val_str or val_str.lower() == 'nan': return 0.0
     
-    # Handle Format Indonesia: 1.000.000,00
     if ',' in val_str and '.' in val_str:
         val_str = val_str.replace('.', '').replace(',', '.')
-    elif ',' in val_str: # 1000,00
+    elif ',' in val_str: 
         val_str = val_str.replace(',', '.')
-    elif '.' in val_str: # 1.000.000
-        # Cek jika titik berfungsi sebagai ribuan (misal 1.000)
+    elif '.' in val_str: 
         parts = val_str.split('.')
         if len(parts[-1]) == 3:
             val_str = val_str.replace('.', '')
@@ -53,7 +51,6 @@ def load_gsheets_data():
         df_f = df_f_raw.dropna(subset=['Periode']).copy()
         df_l = df_l_raw.dropna(subset=['Periode']).copy()
 
-        # MAPPING KOLOM
         def map_lending_cols(c):
             norm = " ".join(str(c).strip().lower().split())
             if 'bank' in norm or 'kreditur' in norm: return 'Kreditur'
@@ -75,7 +72,6 @@ def load_gsheets_data():
         
         df_f.columns = [map_funding_cols(c) for c in df_f.columns]
 
-        # PEMBERSIHAN DATA
         for col in ['Nominal', 'Rate']:
             if col in df_f.columns: df_f[col] = df_f[col].apply(clean_numeric_robust)
         for col in ['Lending_Rate', 'Outstanding', 'Nominal_Lending']:
@@ -88,11 +84,15 @@ def load_gsheets_data():
             try:
                 p_str = str(p).replace('-', ' ').strip()
                 pts = p_str.split()
-                return pd.Series([MONTH_MAP_REV.get(pts[0], 0), str(pts[1])])
+                return pd.Series([int(MONTH_MAP_REV.get(pts[0], 0)), str(pts[1])])
             except: return pd.Series([0, "2026"])
 
         df_f[['m_idx', 'year_val']] = df_f['Periode'].apply(safe_parse_date)
         df_l[['m_idx', 'year_val']] = df_l['Periode'].apply(safe_parse_date)
+        
+        # SANGAT PENTING: Paksa kolom index bulan jadi format matematika murni (Integer)
+        df_f['m_idx'] = pd.to_numeric(df_f['m_idx'], errors='coerce').fillna(0).astype(int)
+        df_l['m_idx'] = pd.to_numeric(df_l['m_idx'], errors='coerce').fillna(0).astype(int)
         
         return df_f, df_l, None
     except Exception as e:
@@ -112,7 +112,7 @@ if os.path.exists(logo_path): st.sidebar.image(logo_path, use_container_width=Tr
 st.sidebar.markdown("---")
 st.sidebar.header("📅 Periode Analisis")
 sel_date = st.sidebar.date_input("Pilih Bulan & Tahun:", value=datetime(2026, 3, 1))
-s_m_idx, s_y_val = sel_date.month, str(sel_date.year)
+s_m_idx, s_y_val = int(sel_date.month), str(sel_date.year)
 s_m_name = MONTH_MAP_ID[s_m_idx]
 
 df_f_raw, df_l_raw, err = load_gsheets_data()
@@ -145,7 +145,7 @@ with tab1:
     if not df_f.empty:
         df_f['Rev_MtD'] = (df_f['Nominal'] * (df_f['Rate'] / 100)) / 12
         total_mtd = df_f['Rev_MtD'].sum()
-        ytd_mask = (df_f_raw['year_val'] == s_y_val) & (df_f_raw['m_idx'] <= s_m_idx)
+        ytd_mask = (df_f_raw['year_val'] == s_y_val) & (df_f_raw['m_idx'] <= s_m_idx) & (df_f_raw['m_idx'] > 0)
         total_ytd_f = ((df_f_raw[ytd_mask]['Nominal'] * df_f_raw[ytd_mask]['Rate']) / 1200).sum()
         
         m1, m2, m3, m4 = st.columns(4)
@@ -174,7 +174,6 @@ with tab1:
                 else: st.info("Tidak ada penempatan jatuh tempo dekat.")
 
         st.divider()
-        # PROYEKSI STRATEGIS SBN / OBLIGASI (RESTORED)
         st.subheader("📊 Strategic Projection: SBN vs Corporate Bonds")
         df_proj = df_f.copy()
         df_proj['Yield_Net'] = df_proj['Rate'] * 0.8
@@ -196,11 +195,13 @@ with tab1:
         st.warning(f"Data Funding untuk {s_m_name} {s_y_val} tidak ditemukan.")
 
 # ==========================================
-# TAB 2: LENDING (YTD FIX & NO LOGOS)
+# TAB 2: LENDING (YTD FIX & MATEMATIKA MURNI)
 # ==========================================
 with tab2:
     df_l = df_l_raw[(df_l_raw['m_idx'] == s_m_idx) & (df_l_raw['year_val'] == s_y_val)].copy()
-    ytd_mask_l = (df_l_raw['year_val'] == s_y_val) & (df_l_raw['m_idx'] <= s_m_idx)
+    
+    # YTD MASK SEKARANG 100% AMAN (Int vs Int)
+    ytd_mask_l = (df_l_raw['year_val'] == s_y_val) & (df_l_raw['m_idx'] <= s_m_idx) & (df_l_raw['m_idx'] > 0)
     df_l_ytd = df_l_raw[ytd_mask_l].copy()
 
     if not df_l.empty:
@@ -209,7 +210,7 @@ with tab2:
         mtd_bunga = df_l.loc[df_l['Tipe'].astype(str).str.contains('bunga', case=False, na=False), 'Nominal_Lending'].sum()
         mtd_total = mtd_pokok + mtd_bunga
 
-        # Kalkulasi YtD (FIXED LOGIC)
+        # Kalkulasi YtD (FIXED)
         ytd_pokok = df_l_ytd.loc[df_l_ytd['Tipe'].astype(str).str.contains('pokok', case=False, na=False), 'Nominal_Lending'].sum()
         ytd_bunga = df_l_ytd.loc[df_l_ytd['Tipe'].astype(str).str.contains('bunga', case=False, na=False), 'Nominal_Lending'].sum()
         ytd_total = ytd_pokok + ytd_bunga
