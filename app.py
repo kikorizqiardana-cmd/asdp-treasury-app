@@ -101,15 +101,13 @@ def load_gsheets_data():
     except Exception as e:
         return pd.DataFrame(), pd.DataFrame(), f"Error Parse: {str(e)}"
 
-# ENGINE CHART: Anti badai & include IndoNIA/JIBOR
+# ENGINE CHART: Anti badai
 @st.cache_data(ttl=3600)
 def get_market_history():
     try:
         data = yf.Ticker("ID10Y=F").history(period="6mo")
         if not data.empty and len(data) > 10:
             df = data[['Close']].rename(columns={'Close': 'SBN_10Y'}).copy()
-            df['IndoNIA'] = 6.25 + np.random.normal(0, 0.02, len(df))
-            df['JIBOR_1M'] = 6.60 + np.random.normal(0, 0.02, len(df))
             return df
     except: pass
     
@@ -117,11 +115,9 @@ def get_market_history():
     dates = pd.date_range(end=datetime.now(), periods=120, freq='B')
     df = pd.DataFrame(index=dates)
     df['SBN_10Y'] = np.linspace(6.4, 6.7, len(df)) + np.random.normal(0, 0.02, len(df))
-    df['IndoNIA'] = np.linspace(6.0, 6.25, len(df)) + np.random.normal(0, 0.01, len(df))
-    df['JIBOR_1M'] = np.linspace(6.3, 6.6, len(df)) + np.random.normal(0, 0.01, len(df))
     return df
 
-# --- 4. SIDEBAR (REALTIME CLOCK ADDED & LOCKED) ---
+# --- 4. SIDEBAR (REALTIME CLOCK & LIVE RATES ADDED) ---
 logo_path = "ferry.png"
 if os.path.exists(logo_path): st.sidebar.image(logo_path, use_container_width=True)
 
@@ -156,9 +152,12 @@ if err: st.error(err); st.stop()
 st.sidebar.markdown("---")
 st.sidebar.header("⚙️ Market Intelligence")
 hist_m = get_market_history()
-sbn_val = st.sidebar.number_input("SBN 10Y Benchmark (Live)", value=round(float(hist_m['SBN_10Y'].iloc[-1]), 2), step=0.01)
-bareksa_val = st.sidebar.number_input("Bareksa (Money Market %)", value=4.75, step=0.01)
+sbn_val = st.sidebar.number_input("SBN 10Y Benchmark (%)", value=round(float(hist_m['SBN_10Y'].iloc[-1]), 2), step=0.01)
+bareksa_val = st.sidebar.number_input("Bareksa MM (%)", value=4.75, step=0.01)
 criec_val = st.sidebar.number_input("PHEI CRIEC Index (%)", value=7.20, step=0.01)
+# PENAMBAHAN INDONIA DAN JIBOR SEBAGAI LIVE RATE
+indonia_val = st.sidebar.number_input("IndoNIA (Live %)", value=6.25, step=0.01)
+jibor_val = st.sidebar.number_input("JIBOR 1M (Live %)", value=6.60, step=0.01)
 
 st.sidebar.link_button("🌐 Bareksa Data", "https://www.bareksa.com/id/data", use_container_width=True)
 st.sidebar.link_button("📉 PHEI (Informasi Efek)", "https://www.phei.co.id/Data/Informasi-Efek", use_container_width=True)
@@ -297,72 +296,34 @@ with tab2:
         st.warning(f"Data Lending untuk {s_m_name} {s_y_val} tidak ditemukan. Cek penulisan Periode di GSheet.")
 
 # ==========================================
-# TAB 3: ALM RESUME (REBUILT WITH INTELLIGENCE)
+# TAB 3: ALM RESUME (YTD MATCHING & POKOK ALERT)
 # ==========================================
 with tab3:
     st.header(f"📊 ALM Strategic Intelligence - {s_m_name}")
     
-    if not df_f.empty:
-        out_total = df_l['Nominal_Lending'].sum() if not df_l.empty else 0
-        total_mtd_rev = (df_f['Nominal'] * (df_f['Rate'] / 100) / 12).sum()
-        icr_val = (total_mtd_rev / out_total) if out_total > 0 else 0
+    # 1. PENGAMBILAN DATA YTD REVENUE
+    ytd_mask_f = (df_f_raw['year_val'] == s_y_val) & (df_f_raw['m_idx'] <= s_m_idx) & (df_f_raw['m_idx'] > 0)
+    ytd_rev = ((df_f_raw[ytd_mask_f]['Nominal'] * df_f_raw[ytd_mask_f]['Rate']) / 1200).sum()
+
+    # 2. PENGAMBILAN DATA LENDING (BUNGA VS POKOK)
+    mtd_mask_l = (df_l_raw['year_val'] == s_y_val) & (df_l_raw['m_idx'] == s_m_idx)
+    df_l_mtd = df_l_raw[mtd_mask_l].copy()
+    
+    ytd_mask_l = (df_l_raw['year_val'] == s_y_val) & (df_l_raw['m_idx'] <= s_m_idx) & (df_l_raw['m_idx'] > 0)
+    df_l_ytd = df_l_raw[ytd_mask_l].copy()
+
+    if not df_f.empty and not df_l_ytd.empty:
+        # Menghitung YtD Bunga (Untuk ICR)
+        is_bunga_ytd = df_l_ytd['Tipe'].astype(str).str.contains('bunga|margin|fee', case=False, na=False)
+        ytd_bunga_out = df_l_ytd.loc[is_bunga_ytd, 'Nominal_Lending'].sum()
         
+        # Menghitung MtD Pokok (Untuk Alert Cashflow Bulan Ini)
+        is_bunga_mtd = df_l_mtd['Tipe'].astype(str).str.contains('bunga|margin|fee', case=False, na=False)
+        mtd_pokok_out = df_l_mtd.loc[~is_bunga_mtd, 'Nominal_Lending'].sum()
+
+        icr_val = (ytd_rev / ytd_bunga_out) if ytd_bunga_out > 0 else 0
+        
+        # TAMPILAN 4 METRIK UTAMA
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Interest Revenue", f"Rp {total_mtd_rev:,.0f}")
-        c2.metric("Total Cash Out (P+I)", f"Rp {out_total:,.0f}")
-        c3.metric("Net Flow Gap", f"Rp {total_mtd_rev - out_total:,.0f}")
-        c4.metric("ICR Strength", f"{icr_val:.2f}x")
-        st.divider()
-        
-        # --- RISK ASSESSMENT & AI LINK ---
-        st.subheader("⚠️ Risk Assessment & AI Insight")
-        cr1, cr2 = st.columns(2)
-        with cr1:
-            st.markdown("**1. ICR Operations Check**")
-            if icr_val < 1.0:
-                st.error(f"🚨 **CRITICAL RISK (ICR: {icr_val:.2f}x):** Bunga placement tidak menutupi kewajiban lending bulanan. Potensi defisit kas operasi!")
-            elif icr_val < 1.5:
-                st.warning(f"⚠️ **WARNING (ICR: {icr_val:.2f}x):** ICR cukup tipis. Pertimbangkan realokasi ke instrumen dengan yield lebih tinggi.")
-            else:
-                st.success(f"✅ **SAFE (ICR: {icr_val:.2f}x):** ICR sangat sehat. Pendapatan bunga menutupi kewajiban dengan buffer yang memadai.")
-            st.markdown("[🤖 Tanya AI Assistant untuk Strategi Restrukturisasi](#)")
-
-        with cr2:
-            st.markdown("**2. Corporate Bond Reinvestment Risk**")
-            if rating == "AAA":
-                st.info("🛡️ **Rating AAA:** Risiko gagal bayar sangat rendah. Aman untuk penempatan dana besar, namun potensi yield sedikit tertahan oleh tingginya demand institusional.")
-            elif rating in ["AA+", "AA"]:
-                st.success(f"⚖️ **Rating {rating}:** Titik ekuilibrium terbaik antara keamanan (Investment Grade) dan optimalisasi spread. Sangat direkomendasikan.")
-            elif rating == "A":
-                st.warning("⚠️ **Rating A:** Waspada terhadap volatilitas pasar. Pastikan counterparty memiliki buffer likuiditas yang kuat. Pantau laporan kuartalan.")
-            elif rating == "BBB":
-                st.error("🚨 **Rating BBB:** Batas bawah Investment Grade. Risiko downgrade ke *Junk Bond* terbuka lebar jika ada syok makroekonomi. Hanya untuk alokasi taktis jangka pendek!")
-
-        st.divider()
-        
-        # --- HISTORICAL MIXED CHART (LINES + BARS) ---
-        st.subheader("📈 6-Month Market Trend (Independent Engine)")
-        plot_df = hist_m.copy()
-        plot_df['Bareksa'] = plot_df['SBN_10Y'] * (bareksa_val / (sbn_val if sbn_val != 0 else 1))
-        plot_df['PHEI'] = plot_df['SBN_10Y'] * (criec_val / (sbn_val if sbn_val != 0 else 1))
-        
-        f_alm = go.Figure()
-        
-        # ADD BARS (IndoNIA & JIBOR)
-        if 'IndoNIA' in plot_df.columns:
-            f_alm.add_trace(go.Bar(x=plot_df.index, y=plot_df['IndoNIA'], name='IndoNIA', marker_color='lightblue', opacity=0.5))
-        if 'JIBOR_1M' in plot_df.columns:
-            f_alm.add_trace(go.Bar(x=plot_df.index, y=plot_df['JIBOR_1M'], name='JIBOR 1M', marker_color='lightgreen', opacity=0.5))
-
-        # ADD LINES (SBN, Bareksa, PHEI)
-        f_alm.add_trace(go.Scatter(x=plot_df.index, y=plot_df['SBN_10Y'], name='SBN 10Y', line=dict(color='blue', width=3)))
-        f_alm.add_trace(go.Scatter(x=plot_df.index, y=plot_df['Bareksa'], name='Bareksa MM', line=dict(color='orange', dash='dot', width=2)))
-        f_alm.add_trace(go.Scatter(x=plot_df.index, y=plot_df['PHEI'], name='PHEI Bond Index', line=dict(color='red', width=3)))
-        
-        f_alm.update_layout(
-            barmode='group',
-            hovermode="x unified",
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-            yaxis_title="Rate (%)"
-        )
-        st.plotly_chart(f_alm, use_container_width=True)
+        c1.metric("YtD Interest Revenue", f"Rp {ytd_rev:,.0f}")
+        c2.metric("YtD Interest Outflow", f"Rp {ytd_bunga_out:
