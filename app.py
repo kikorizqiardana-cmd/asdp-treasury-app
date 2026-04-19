@@ -46,9 +46,17 @@ def load_gsheets_data():
             if 'Jatuh_Tempo' in df.columns: 
                 df['Jatuh_Tempo'] = pd.to_datetime(df['Jatuh_Tempo'], dayfirst=True, errors='coerce')
         
-        # Tambahkan kolom helper urutan bulan langsung saat loading agar tidak KeyError
-        df_f['month_idx'] = df_f['Periode'].apply(lambda x: MONTH_MAP.get(str(x).split(' ')[0], 0))
-        df_f['year_idx'] = df_f['Periode'].apply(lambda x: str(x).split(' ')[1] if len(str(x).split(' ')) > 1 else "2026")
+        # Tambahkan kolom helper urutan bulan & tahun dengan proteksi error
+        def get_month_num(p):
+            p = str(p).strip()
+            return MONTH_MAP.get(p.split(' ')[0], 0) if ' ' in p else 0
+
+        def get_year_val(p):
+            p = str(p).strip()
+            return p.split(' ')[1] if ' ' in p else "2026"
+
+        df_f['month_idx'] = df_f['Periode'].apply(get_month_num)
+        df_f['year_idx'] = df_f['Periode'].apply(get_year_val)
         
         return df_f, df_l, None
     except Exception as e: return pd.DataFrame(), pd.DataFrame(), str(e)
@@ -62,27 +70,31 @@ def get_market_history():
     dates = pd.date_range(end=datetime.now(), periods=180)
     return pd.DataFrame({'SBN_10Y': np.linspace(6.5, 6.8, 180)}, index=dates).copy()
 
-# --- 3. SIDEBAR ---
-logo_path = "ferry.png"
-if os.path.exists(logo_path): st.sidebar.image(logo_path, use_container_width=True)
-st.sidebar.markdown("---")
-
+# --- 3. PROSES DATA AWAL ---
 df_f_raw, df_l_raw, err = load_gsheets_data()
-if err: st.stop()
+if err: st.error(f"Gagal memuat data: {err}"); st.stop()
 
-all_months = sorted(df_f_raw['Periode'].unique().tolist(), 
-                    key=lambda x: (str(x).split(' ')[1], MONTH_MAP.get(str(x).split(' ')[0], 0)), 
-                    reverse=True)
+# Definisi data pasar di awal untuk menghindari NameError
+raw_market_data = get_market_history()
+
+# Sorting bulan yang lebih aman (Bulletproof Sort)
+def safe_sort_key(p):
+    p = str(p).strip()
+    if ' ' not in p: return (0, 0)
+    parts = p.split(' ')
+    return (int(parts[1]) if parts[1].isdigit() else 0, MONTH_MAP.get(parts[0], 0))
+
+all_months = sorted(df_f_raw['Periode'].unique().tolist(), key=safe_sort_key, reverse=True)
 sel_month = st.sidebar.selectbox("Pilih Periode Analisis:", all_months)
 
-# Ambil metadata dari pilihan user
-sel_month_name = sel_month.split(' ')[0]
-sel_year = sel_month.split(' ')[1]
+# Metadata pilihan user
+sel_month_name = str(sel_month).split(' ')[0]
+sel_year = str(sel_month).split(' ')[1] if ' ' in str(sel_month) else "2026"
 sel_idx = MONTH_MAP.get(sel_month_name, 0)
 
-# Market Intelligence
-hist_data = get_market_history()
-sbn_val = st.sidebar.number_input("SBN 10Y Benchmark (Live)", value=round(float(hist_data['SBN_10Y'].iloc[-1]), 2), step=0.01)
+# Sidebar Market Inputs
+st.sidebar.header("⚙️ Market Intelligence")
+sbn_val = st.sidebar.number_input("SBN 10Y Benchmark (Live)", value=round(float(raw_market_data['SBN_10Y'].iloc[-1]), 2), step=0.01)
 bareksa_val = st.sidebar.number_input("Bareksa (Money Market %)", value=4.75, step=0.01)
 criec_val = st.sidebar.number_input("PHEI CRIEC Index (%)", value=7.20, step=0.01)
 
@@ -95,33 +107,33 @@ st.title(f"🚢 ASDP Treasury & ALM Master Command Center")
 tab1, tab2, tab3 = st.tabs(["💰 Modul 1: Funding", "📈 Modul 2: Lending", "📊 Modul 3: ALM Resume"])
 
 # ==========================================
-# TAB 1: FUNDING (FIXED YTD LOGIC)
+# TAB 1: FUNDING (YTD ACCURATE)
 # ==========================================
 with tab1:
-    # Filter MtD
     df_f = df_f_raw[df_f_raw['Periode'] == sel_month].copy()
     
     if not df_f.empty:
-        # Kalkulasi MtD
         df_f['Net_Yield'] = df_f['Rate'] * 0.8
         df_f['Pendapatan_Riil'] = (df_f['Nominal'] * (df_f['Rate'] / 100)) / 12
         mtd_rev = df_f['Pendapatan_Riil'].sum()
         
-        # FIX YTD: Filter HANYA tahun yang sama DAN bulan <= bulan terpilih
-        df_ytd = df_f_raw[(df_f_raw['year_idx'] == sel_year) & (df_f_raw['month_idx'] <= sel_idx)].copy()
-        df_ytd['Revenue_Calc'] = (df_ytd['Nominal'] * (df_ytd['Rate'] / 100)) / 12
-        ytd_rev = df_ytd['Revenue_Calc'].sum()
+        # PERHITUNGAN YTD YANG AKURAT
+        # Hanya ambil data di tahun yang sama dan bulan yang lebih kecil/sama dengan pilihan
+        ytd_mask = (df_f_raw['year_idx'] == sel_year) & (df_f_raw['month_idx'] <= sel_idx)
+        df_ytd_data = df_f_raw[ytd_mask].copy()
+        df_ytd_data['Rev_YtD'] = (df_ytd_data['Nominal'] * (df_ytd_data['Rate'] / 100)) / 12
+        ytd_rev = df_ytd_data['Rev_YtD'].sum()
 
         net_sbn = sbn_val * 0.9
 
-        # BARIS 1: METRICS UTAMA (WhatsApp Style + YtD)
+        # Metrics baris 1
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Total Placement", f"Rp {df_f['Nominal'].sum():,.0f}")
         m2.metric(f"MtD Revenue ({sel_month_name})", f"Rp {mtd_rev:,.0f}")
         m3.metric(f"YtD Revenue (Jan-{sel_month_name})", f"Rp {ytd_rev:,.0f}")
         m4.metric("SBN Net Benchmark", f"{net_sbn:.2f}%")
 
-        # BARIS 2: OPPORTUNITY GAIN
+        # Opportunity metrics
         p1, p2, p3 = st.columns(3)
         p1.metric("Potensi Tambahan (SBN)", f"Rp {(df_f['Nominal'] * (net_sbn/100) / 12).sum() - mtd_rev:,.0f}")
         p2.metric(f"Potensi Tambahan ({rating})", f"Rp {(df_f['Nominal'] * (target_bond_net/100) / 12).sum() - mtd_rev:,.0f}")
@@ -135,7 +147,7 @@ with tab1:
                 df_loss = df_f[df_f['Net_Yield'] < net_sbn]
                 if not df_loss.empty:
                     for _, row in df_loss.iterrows(): st.error(f"**{row['Bank']}** | Yield: `{row['Net_Yield']:.2f}%`")
-                else: st.success("Optimal.")
+                else: st.success("Strategi Penempatan Optimal.")
         with c_al2:
             st.subheader("⏳ Maturity Watch (H-14)")
             with st.container(height=180):
@@ -143,7 +155,7 @@ with tab1:
                 df_soon = df_f[(df_f['Jatuh_Tempo'] >= today) & (df_f['Jatuh_Tempo'] <= today + timedelta(days=14))]
                 if not df_soon.empty:
                     for _, row in df_soon.iterrows(): st.warning(f"**{row['Bank']}** | `{row['Jatuh_Tempo'].strftime('%d-%m-%Y')}`")
-                else: st.info("Aman.")
+                else: st.info("Tidak ada jatuh tempo dekat.")
 
         st.divider()
         v1, v2 = st.columns([1.2, 1])
@@ -159,9 +171,8 @@ with tab1:
 with tab2:
     df_l = df_l_raw[df_l_raw['Periode'] == sel_month].copy()
     if not df_l.empty:
-        total_cash_out_val = df_l['Nominal'].sum()
         l1, l2, l3 = st.columns(3)
-        l1.metric("Total Cash Out Debt", f"Rp {total_cash_out_val:,.0f}")
+        l1.metric("Total Cash Out Debt", f"Rp {df_l['Nominal'].sum():,.0f}")
         l2.metric("Avg. Yield Lending", f"{df_l['Lending_Rate (%)'].mean():.2f}%" if 'Lending_Rate (%)' in df_l.columns else "N/A")
         l3.metric("Bank Kreditur Utama", df_l.groupby('Kreditur')['Nominal'].sum().idxmax())
         st.divider()
@@ -174,7 +185,7 @@ with tab2:
         st.plotly_chart(px.bar(df_l.groupby('Kreditur')['Nominal'].sum().reset_index().sort_values('Nominal', ascending=False), x='Kreditur', y='Nominal', text_auto=',.0f', color='Kreditur', title="Cash Out per Bank"), use_container_width=True)
 
 # ==========================================
-# TAB 3: ALM RESUME (LOCKED)
+# TAB 3: ALM RESUME (STABLE PLOTTING)
 # ==========================================
 with tab3:
     st.header(f"📊 ALM Strategic Intelligence - {sel_month}")
@@ -206,11 +217,13 @@ with tab3:
             corp_data = {"Issuer": picks["Issuer"], "Instrumen": picks["Inst"], "Yield": [f"{(sbn_val + spread_map[rating]/100):.2f}%", f"{(sbn_val + spread_map[rating]/100 - 0.1):.2f}%", f"{(sbn_val + spread_map[rating]/100 + 0.15):.2f}%"]}
             st.table(pd.DataFrame(corp_data))
         st.divider()
-        plot_market = hist_data.copy()
-        plot_market['Bareksa'] = plot_market['SBN_10Y'] * (bareksa_val / (sbn_val if sbn_val != 0 else 1))
-        plot_market['PHEI_Bond'] = plot_market['SBN_10Y'] * (criec_val / (sbn_val if sbn_val != 0 else 1))
+        
+        # Plotting stabil menggunakan raw_market_data yang sudah didefinisikan di awal
+        plot_m = raw_market_data.copy()
+        plot_m['Bareksa'] = plot_m['SBN_10Y'] * (bareksa_val / (sbn_val if sbn_val != 0 else 1))
+        plot_m['PHEI_Bond'] = plot_m['SBN_10Y'] * (criec_val / (sbn_val if sbn_val != 0 else 1))
         fig_h = go.Figure()
-        fig_h.add_trace(go.Scatter(x=plot_market.index, y=plot_market['SBN_10Y'], name='SBN 10Y'))
-        fig_h.add_trace(go.Scatter(x=plot_market.index, y=plot_market['Bareksa'], name='Bareksa MM', line=dict(dash='dot')))
-        fig_h.add_trace(go.Scatter(x=plot_market.index, y=plot_market['PHEI_Bond'], name='PHEI Bond Index', line=dict(width=3)))
+        fig_h.add_trace(go.Scatter(x=plot_m.index, y=plot_m['SBN_10Y'], name='SBN 10Y'))
+        fig_h.add_trace(go.Scatter(x=plot_m.index, y=plot_m['Bareksa'], name='Bareksa MM', line=dict(dash='dot')))
+        fig_h.add_trace(go.Scatter(x=plot_m.index, y=plot_m['PHEI_Bond'], name='PHEI Bond Index', line=dict(width=3)))
         st.plotly_chart(fig_h, use_container_width=True)
