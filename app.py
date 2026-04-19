@@ -15,7 +15,6 @@ MONTH_MAP_ID = {
     1: 'Januari', 2: 'Februari', 3: 'Maret', 4: 'April', 5: 'Mei', 6: 'Juni',
     7: 'Juli', 8: 'Agustus', 9: 'September', 10: 'Oktober', 11: 'November', 12: 'Desember'
 }
-# Map pencarian kata kunci (Semua Lowercase untuk Radar)
 MONTH_LOOKUP = {
     'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'mei': 5, 'may': 5, 'jun': 6, 
     'jul': 7, 'agu': 8, 'aug': 8, 'sep': 9, 'okt': 10, 'oct': 10, 'nov': 11, 'des': 12, 'dec': 12
@@ -45,7 +44,7 @@ def load_gsheets_data():
         df_f = df_f_raw.dropna(subset=['Periode']).copy()
         df_l = df_l_raw.dropna(subset=['Periode']).copy()
 
-        # MAPPING KOLOM
+        # MAPPING KOLOM LENDING (Tetap Kreditur)
         def map_lending_cols(c):
             norm = " ".join(str(c).strip().lower().split())
             if 'bank' in norm or 'kreditur' in norm: return 'Kreditur'
@@ -58,10 +57,11 @@ def load_gsheets_data():
 
         df_l.columns = [map_lending_cols(c) for c in df_l.columns]
         
+        # MAPPING KOLOM FUNDING (Diganti jadi Bank)
         def map_funding_cols(c):
             norm = " ".join(str(c).strip().lower().split())
             if 'rate' in norm: return 'Rate'
-            if 'bank' in norm or 'kreditur' in norm: return 'Kreditur'
+            if 'bank' in norm or 'kreditur' in norm: return 'Bank'
             if 'nominal' in norm: return 'Nominal'
             if 'jatuh' in norm and 'tempo' in norm: return 'Jatuh_Tempo'
             return str(c).strip()
@@ -76,7 +76,6 @@ def load_gsheets_data():
         if 'Jatuh_Tempo' in df_f.columns: df_f['Jatuh_Tempo'] = pd.to_datetime(df_f['Jatuh_Tempo'], dayfirst=True, errors='coerce')
         if 'Jatuh_Tempo' in df_l.columns: df_l['Jatuh_Tempo'] = pd.to_datetime(df_l['Jatuh_Tempo'], dayfirst=True, errors='coerce')
 
-        # RADAR BULAN (Keyword Based)
         def robust_parse_month(p):
             p_clean = str(p).lower().replace('-', ' ').strip()
             for key, val in MONTH_LOOKUP.items():
@@ -131,6 +130,7 @@ st.sidebar.link_button("📊 Data Source (GSheets)", "https://docs.google.com/sp
 st.sidebar.markdown("---")
 rating = st.sidebar.selectbox("Rating Reinvestasi:", ["AAA", "AA+", "AA", "A", "BBB"])
 spread_map = {"AAA": 80, "AA+": 110, "AA": 140, "A": 260, "BBB": 480}
+# TARGET BOND NET (Dinamis dari input Sidebar)
 target_bond_net = (sbn_val + (spread_map[rating]/100)) * 0.9
 
 # --- 5. DASHBOARD UI ---
@@ -138,7 +138,7 @@ st.title(f"🚢 ASDP Treasury & ALM Master Command Center")
 tab1, tab2, tab3 = st.tabs(["💰 Modul 1: Funding", "📈 Modul 2: Lending", "📊 Modul 3: ALM Resume"])
 
 # ==========================================
-# TAB 1: FUNDING (ORIGINAL VISUALS RESTORED)
+# TAB 1: FUNDING (MODIFIED TO "BANK" & "RESUME")
 # ==========================================
 with tab1:
     df_f = df_f_raw[(df_f_raw['m_idx'] == s_m_idx) & (df_f_raw['year_val'] == s_y_val)].copy()
@@ -162,7 +162,7 @@ with tab1:
                 net_sbn = sbn_val * 0.9
                 df_loss = df_f[(df_f['Rate'] * 0.8) < net_sbn]
                 if not df_loss.empty:
-                    for _, row in df_loss.iterrows(): st.error(f"**{row['Kreditur']}** | Yield Net: `{(row['Rate']*0.8):.2f}%`")
+                    for _, row in df_loss.iterrows(): st.error(f"**{row['Bank']}** | Yield Net: `{(row['Rate']*0.8):.2f}%`")
                 else: st.success("Strategi Penempatan Optimal.")
         with c_al2:
             st.subheader("⏳ Maturity Watch (H-14)")
@@ -170,27 +170,34 @@ with tab1:
                 today = datetime.now()
                 df_soon = df_f[(df_f['Jatuh_Tempo'] >= today) & (df_f['Jatuh_Tempo'] <= today + timedelta(days=14))]
                 if not df_soon.empty:
-                    for _, row in df_soon.iterrows(): st.warning(f"**{row['Kreditur']}** | JT: `{row['Jatuh_Tempo'].strftime('%d-%m-%Y')}`")
+                    for _, row in df_soon.iterrows(): st.warning(f"**{row['Bank']}** | JT: `{row['Jatuh_Tempo'].strftime('%d-%m-%Y')}`")
                 else: st.info("Tidak ada penempatan jatuh tempo dekat.")
 
         st.divider()
-        st.subheader("📊 Strategic Projection: SBN vs Corporate Bonds")
+        # TABEL RESUME DINAMIS
+        st.subheader("📊 Resume")
         df_proj = df_f.copy()
         df_proj['Yield_Net'] = df_proj['Rate'] * 0.8
+        # Kalkulasi Gap & Proyeksi langsung membaca target_bond_net dari input Sidebar
         df_proj['Gap_vs_Target'] = target_bond_net - df_proj['Yield_Net']
-        df_proj['Potensi_Ops_Gain'] = (df_proj['Gap_vs_Target'] / 100) * df_proj['Nominal'] / 12
-        st.dataframe(df_proj[['Kreditur', 'Nominal', 'Rate', 'Yield_Net', 'Gap_vs_Target', 'Potensi_Ops_Gain']].style.format({'Nominal': '{:,.0f}', 'Rate': '{:.2f}%', 'Yield_Net': '{:.2f}%', 'Gap_vs_Target': '{:.2f}%', 'Potensi_Ops_Gain': '{:,.0f}'}), use_container_width=True)
+        df_proj['Proyeksi_Tambahan'] = (df_proj['Gap_vs_Target'] / 100) * df_proj['Nominal'] / 12
+        
+        st.dataframe(
+            df_proj[['Bank', 'Nominal', 'Rate', 'Yield_Net', 'Gap_vs_Target', 'Proyeksi_Tambahan']].style.format({
+                'Nominal': '{:,.0f}', 'Rate': '{:.2f}%', 'Yield_Net': '{:.2f}%', 
+                'Gap_vs_Target': '{:.2f}%', 'Proyeksi_Tambahan': '{:,.0f}'
+            }), use_container_width=True
+        )
 
         st.divider()
         v1, v2 = st.columns([1.2, 1])
-        with v1: st.plotly_chart(px.bar(df_f.groupby('Kreditur')['Rev_MtD'].sum().reset_index(), x='Kreditur', y='Rev_MtD', title="Revenue per Bank (MtD)", text_auto=',.0f', color='Kreditur'), use_container_width=True)
-        # KEMBALI KE PIE CHART (Sesuai Semula)
-        with v2: st.plotly_chart(px.pie(df_f, values='Nominal', names='Kreditur', hole=0.5, title="Nominal Mix Placement"), use_container_width=True)
+        with v1: st.plotly_chart(px.bar(df_f.groupby('Bank')['Rev_MtD'].sum().reset_index(), x='Bank', y='Rev_MtD', title="Revenue per Bank (MtD)", text_auto=',.0f', color='Bank'), use_container_width=True)
+        with v2: st.plotly_chart(px.pie(df_f, values='Nominal', names='Bank', hole=0.5, title="Nominal Mix Placement"), use_container_width=True)
     else:
         st.warning(f"Data Funding untuk {s_m_name} {s_y_val} tidak ditemukan.")
 
 # ==========================================
-# TAB 2: LENDING (DESEMBER & MEI FIXED)
+# TAB 2: LENDING (LOCKED & SECURED)
 # ==========================================
 with tab2:
     df_l = df_l_raw[(df_l_raw['m_idx'] == s_m_idx) & (df_l_raw['year_val'] == s_y_val)].copy()
@@ -246,7 +253,7 @@ with tab2:
             df_plot = pd.DataFrame(plot_data)
             st.plotly_chart(px.bar(df_plot, x='Kreditur', y=['Pokok', 'Bunga'], title="Breakdown Pembayaran Pokok vs Bunga", barmode='group', color_discrete_sequence=['#1f77b4', '#ff7f0e']), use_container_width=True)
     else:
-        st.warning(f"Data Lending untuk {s_m_name} {s_y_val} tidak ditemukan. Cek penulisan Periode di GSheet (Contoh: 'Desember 2026').")
+        st.warning(f"Data Lending untuk {s_m_name} {s_y_val} tidak ditemukan. Cek penulisan Periode di GSheet.")
 
 # ==========================================
 # TAB 3: ALM RESUME
