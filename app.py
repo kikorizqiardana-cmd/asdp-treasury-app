@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 # --- 1. KONFIGURASI HALAMAN ---
 st.set_page_config(page_title="ASDP ALM Strategic Command", layout="wide", page_icon="🚢")
 
-# --- 2. DATA MAPPING (LOCKED) ---
+# --- 2. DATA MAPPING (FIXED) ---
 MONTH_MAP_ID = {
     1: 'Januari', 2: 'Februari', 3: 'Maret', 4: 'April', 5: 'Mei', 6: 'Juni',
     7: 'Juli', 8: 'Agustus', 9: 'September', 10: 'Oktober', 11: 'November', 12: 'Desember'
@@ -29,14 +29,12 @@ def get_bank_logo(bank_name):
     if 'btn' in bank_name: return "https://upload.wikimedia.org/wikipedia/commons/f/fd/Bank_BTN_logo.svg"
     return "https://cdn-icons-png.flaticon.com/512/2830/2830284.png"
 
-# --- 3. ENGINE DATA (ROBUST & PRECICE) ---
+# --- 3. ENGINE DATA (EXTRA ROBUST) ---
 def clean_numeric_robust(series):
     def process_val(val):
         val = str(val).strip().replace('Rp', '').replace('%', '').replace(' ', '').replace(',', '')
-        if not val or val == 'nan' or val == 'None': return "0"
-        # Menangani format ribuan dengan titik (1.000.000 -> 1000000)
-        if '.' in val and len(val.split('.')[-1]) == 3:
-            val = val.replace('.', '')
+        if not val or val == 'nan' or val == 'None' or val == '': return "0"
+        if '.' in val and len(val.split('.')[-1]) == 3: val = val.replace('.', '')
         return val
     return pd.to_numeric(series.apply(process_val), errors='coerce').fillna(0)
 
@@ -48,27 +46,38 @@ def load_gsheets_data():
         df_f = pd.read_csv(base_url + "Funding")
         df_l = pd.read_csv(base_url + "Lending")
         
+        # Super Clean Kolom
         df_f.columns = [c.strip() for c in df_f.columns]
         df_l.columns = [c.strip() for c in df_l.columns]
         
-        # Funding Renaming
+        # SMART MAPPING LENDING (Cari kolom yang mirip-mirip)
+        l_map = {
+            'Bank': 'Kreditur', 'Kreditur': 'Kreditur',
+            'Rate': 'Lending_Rate', 'Lending Rate': 'Lending_Rate', 'Bunga': 'Lending_Rate',
+            'Sisa Outstanding': 'Outstanding', 'Outstanding': 'Outstanding',
+            'Pembayaran Pokok': 'Bayar_Pokok', 'Pokok': 'Bayar_Pokok', 'Bayar Pokok': 'Bayar_Pokok'
+        }
+        
+        for old_c, new_c in l_map.items():
+            if old_c in df_l.columns and new_c not in df_l.columns:
+                df_l.rename(columns={old_c: new_c}, inplace=True)
+        
+        # Funding Clean
         if 'Rate (%)' in df_f.columns: df_f.rename(columns={'Rate (%)': 'Rate'}, inplace=True)
         if 'Bank' in df_f.columns: df_f.rename(columns={'Bank': 'Kreditur'}, inplace=True)
         
-        # Lending Renaming (Mapping kolom baru Kiko)
-        l_rename = {'Bank': 'Kreditur', 'Nominal': 'Plafon', 'Rate': 'Lending_Rate'}
-        df_l.rename(columns=l_rename, inplace=True)
-        
-        # Cleaning angka untuk semua kolom finansial
         for c in ['Nominal', 'Rate']:
             if c in df_f.columns: df_f[c] = clean_numeric_robust(df_f[c])
-        for c in ['Plafon', 'Lending_Rate', 'Sisa Outstanding', 'Pembayaran Pokok']:
+        for c in ['Nominal', 'Lending_Rate', 'Outstanding', 'Bayar_Pokok']:
             if c in df_l.columns: df_l[c] = clean_numeric_robust(df_l[c])
             
         def parse_date_logic(p):
             p_clean = str(p).replace('-', ' ').strip()
+            if not p_clean or p_clean == 'nan': return pd.Series([0, "2026"])
             pts = p_clean.split(' ')
-            return pd.Series([MONTH_MAP_REV.get(pts[0], 0), pts[1] if len(pts) > 1 else "2026"])
+            m_idx = MONTH_MAP_REV.get(pts[0], 0)
+            y_val = pts[1] if len(pts) > 1 else "2026"
+            return pd.Series([m_idx, y_val])
 
         if 'Periode' in df_f.columns:
             df_f[['m_idx', 'year_val']] = df_f['Periode'].apply(parse_date_logic)
@@ -109,7 +118,7 @@ criec_val = st.sidebar.number_input("PHEI CRIEC Index (%)", value=7.20, step=0.0
 
 st.sidebar.link_button("🌐 Bareksa Data", "https://www.bareksa.com/id/data", use_container_width=True)
 st.sidebar.link_button("📉 PHEI (Informasi Efek)", "https://www.phei.co.id/Data/Informasi-Efek", use_container_width=True)
-st.sidebar.link_button("📊 Data Source (Google Sheets)", f"https://docs.google.com/spreadsheets/d/182zKZj0Kr56yqOGM_XW2W3Q6fhaOSo8z9TIbjC_JxxY", use_container_width=True)
+st.sidebar.link_button("📊 Data Source (GSheets)", "https://docs.google.com/spreadsheets/d/182zKZj0Kr56yqOGM_XW2W3Q6fhaOSo8z9TIbjC_JxxY", use_container_width=True)
 st.sidebar.markdown("---")
 rating = st.sidebar.selectbox("Rating Reinvestasi:", ["AAA", "AA+", "AA", "A", "BBB"])
 spread_map = {"AAA": 80, "AA+": 110, "AA": 140, "A": 260, "BBB": 480}
@@ -141,21 +150,21 @@ with tab1:
         with v2: st.plotly_chart(px.pie(df_f, values='Nominal', names='Kreditur', hole=0.5, title="Nominal Mix"), use_container_width=True)
 
 # ==========================================
-# TAB 2: LENDING (ACCURATE & DETAILED)
+# TAB 2: LENDING (FIXED ERROR & LOGO)
 # ==========================================
 with tab2:
     actual_p_str = df_f['Periode'].iloc[0] if not df_f.empty else f"{s_m_name} {s_y_val}"
     df_l = df_l_raw[df_l_raw['Periode'] == actual_p_str].copy()
 
     if not df_l.empty:
-        # Metrik Utama
+        # Metrik Utama (Gaya Modul 1)
         l1, l2, l3 = st.columns(3)
-        l1.metric("Total Sisa Outstanding", f"Rp {df_l['Sisa Outstanding'].sum():,.0f}")
+        l1.metric("Total Sisa Outstanding", f"Rp {df_l['Outstanding'].sum():,.0f}")
         l2.metric("Avg Yield Lending (Rate)", f"{df_l['Lending_Rate'].mean():.2f}%")
-        l3.metric("Total Pembayaran Pokok", f"Rp {df_l['Pembayaran Pokok'].sum():,.0f}")
+        l3.metric("Total Pembayaran Pokok", f"Rp {df_l['Bayar_Pokok'].sum():,.0f}")
 
         st.divider()
-        st.subheader("🏦 Kreditur Pinjaman Detail")
+        st.subheader("🏦 Detail Kreditur & Pokok")
         k_list = df_l['Kreditur'].unique()
         bank_cols = st.columns(len(k_list))
         for i, b_name in enumerate(k_list):
@@ -163,35 +172,39 @@ with tab2:
                 st.image(get_bank_logo(b_name), width=70)
                 b_sub = df_l[df_l['Kreditur'] == b_name]
                 st.write(f"**{b_name}**")
-                st.write(f"Rate: `{b_sub['Lending_Rate'].iloc[0]:.2f}%`")
-                st.write(f"Outstanding: \nRp {b_sub['Sisa Outstanding'].sum():,.0f}")
-                st.write(f"Bayar Pokok: \nRp {b_sub['Pembayaran Pokok'].sum():,.0f}")
+                # Fix AttributeError iloc
+                val_rate = b_sub['Lending_Rate'].values[0] if not b_sub.empty else 0
+                val_out = b_sub['Outstanding'].sum()
+                val_pay = b_sub['Bayar_Pokok'].sum()
+                st.write(f"Rate: `{val_rate:.2f}%`")
+                st.write(f"Sisa: \nRp {val_out:,.0f}")
+                st.write(f"Bayar Pokok: \nRp {val_pay:,.0f}")
 
         st.divider()
         st.subheader(f"📊 Breakdown Pembayaran Pokok per Bank - {s_m_name}")
         fig_l_bar = px.bar(
-            df_l.groupby('Kreditur')['Pembayaran Pokok'].sum().reset_index(),
-            x='Kreditur', y='Pembayaran Pokok',
+            df_l.groupby('Kreditur')['Bayar_Pokok'].sum().reset_index(),
+            x='Kreditur', y='Bayar_Pokok',
             title="Pembayaran Pokok per Kreditur",
             text_auto=',.0f', color='Kreditur',
-            color_discrete_sequence=px.colors.qualitative.Bold
+            color_discrete_sequence=px.colors.qualitative.Pastel
         )
         st.plotly_chart(fig_l_bar, use_container_width=True)
     else:
-        st.warning(f"Data Lending untuk {s_m_name} {s_y_val} belum ditemukan.")
+        st.warning(f"Data Lending untuk {s_m_name} {s_y_val} belum ada di GSheets.")
 
 # ==========================================
-# TAB 3: ALM RESUME (STABLE)
+# TAB 3: ALM RESUME
 # ==========================================
 with tab3:
     st.header(f"📊 ALM Strategic Intelligence - {s_m_name}")
     if not df_f.empty:
-        out_p = df_l['Pembayaran Pokok'].sum() if not df_l.empty else 0
+        out_p = df_l['Bayar_Pokok'].sum() if not df_l.empty else 0
         total_mtd_rev = (df_f['Nominal'] * (df_f['Rate'] / 100) / 12).sum()
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Interest Revenue", f"Rp {total_mtd_rev:,.0f}")
         c2.metric("Cash Out (Pokok)", f"Rp {out_p:,.0f}")
-        c3.metric("Net Margin Gap", f"Rp {total_mtd_rev - out_p:,.0f}")
+        c3.metric("Net Flow Gap", f"Rp {total_mtd_rev - out_p:,.0f}")
         c4.metric("ICR Strength", f"{(total_mtd_rev/out_p if out_p > 0 else 0):.2f}x")
         st.divider()
         plot_df = hist_m.copy()
