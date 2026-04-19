@@ -7,11 +7,13 @@ import os
 import numpy as np
 from datetime import datetime, timedelta
 import streamlit.components.v1 as components
+import requests
+import re
 
 # --- 1. KONFIGURASI HALAMAN ---
 st.set_page_config(page_title="ASDP ALM Strategic Command", layout="wide", page_icon="🚢")
 
-# --- 2. DATA MAPPING (ULTRA ROBUST) ---
+# --- 2. DATA MAPPING ---
 MONTH_MAP_ID = {
     1: 'Januari', 2: 'Februari', 3: 'Maret', 4: 'April', 5: 'Mei', 6: 'Juni',
     7: 'Juli', 8: 'Agustus', 9: 'September', 10: 'Oktober', 11: 'November', 12: 'Desember'
@@ -21,25 +23,18 @@ MONTH_LOOKUP = {
     'jul': 7, 'agu': 8, 'aug': 8, 'sep': 9, 'okt': 10, 'oct': 10, 'nov': 11, 'des': 12, 'dec': 12
 }
 
-# --- 3. ENGINE DATA (PRECISION NUMERIC & DATE RADAR) ---
+# --- 3. ENGINE DATA (GSHEET & SCRAPER BI) ---
 def clean_numeric_robust(val):
-    if pd.isna(val): 
-        return 0.0
+    if pd.isna(val): return 0.0
     val_str = str(val).strip().replace('Rp', '').replace('%', '').replace(' ', '')
-    if not val_str or val_str.lower() == 'nan': 
-        return 0.0
-    if ',' in val_str and '.' in val_str: 
-        val_str = val_str.replace('.', '').replace(',', '.')
-    elif ',' in val_str: 
-        val_str = val_str.replace(',', '.')
+    if not val_str or val_str.lower() == 'nan': return 0.0
+    if ',' in val_str and '.' in val_str: val_str = val_str.replace('.', '').replace(',', '.')
+    elif ',' in val_str: val_str = val_str.replace(',', '.')
     elif '.' in val_str: 
         parts = val_str.split('.')
-        if len(parts[-1]) == 3: 
-            val_str = val_str.replace('.', '')
-    try: 
-        return float(val_str)
-    except Exception: 
-        return 0.0
+        if len(parts[-1]) == 3: val_str = val_str.replace('.', '')
+    try: return float(val_str)
+    except Exception: return 0.0
 
 @st.cache_data(ttl=1)
 def load_gsheets_data():
@@ -75,8 +70,7 @@ def load_gsheets_data():
         
         df_f.columns = [map_funding_cols(c) for c in df_f.columns]
 
-        if 'No_Bilyet' not in df_f.columns:
-            df_f['No_Bilyet'] = "-"
+        if 'No_Bilyet' not in df_f.columns: df_f['No_Bilyet'] = "-"
         df_f['No_Bilyet'] = df_f['No_Bilyet'].fillna("-").astype(str).replace('nan', '-')
 
         for col in ['Nominal', 'Rate']:
@@ -97,8 +91,7 @@ def load_gsheets_data():
             try:
                 pts = str(p).replace('-', ' ').strip().split()
                 return int(pts[1]) if len(pts) > 1 else 2026
-            except Exception: 
-                return 2026
+            except Exception: return 2026
 
         df_f['m_idx'] = df_f['Periode'].apply(robust_parse_month)
         df_f['year_val'] = df_f['Periode'].apply(robust_parse_year)
@@ -116,15 +109,40 @@ def get_market_history():
         if not data.empty and len(data) > 10:
             df = data[['Close']].rename(columns={'Close': 'SBN_10Y'}).copy()
             return df
-    except Exception: 
-        pass
+    except Exception: pass
     
     dates = pd.date_range(end=datetime.now(), periods=120, freq='B')
     df = pd.DataFrame(index=dates)
     df['SBN_10Y'] = np.linspace(6.4, 6.7, len(df)) + np.random.normal(0, 0.02, len(df))
     return df
 
-# --- 4. SIDEBAR (LINKS ADDED) ---
+# --- ENGINE SCRAPER BANK INDONESIA ---
+@st.cache_data(ttl=3600)
+def fetch_live_bi_rates():
+    rates = {'indonia': 6.25, 'jibor_3m': 6.60, 'status': 'Manual/Fallback'}
+    url = "https://www.bi.go.id/en/fungsi-utama/moneter/indonia-jibor/default.aspx"
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+    try:
+        res = requests.get(url, headers=headers, timeout=5)
+        if res.status_code == 200:
+            text = res.text.replace('&nbsp;', ' ')
+            # Scrape INDONIA
+            indonia_match = re.search(r'INDONIA\s*\(\%\)\s*([\d\.\,]+)', text, re.IGNORECASE)
+            if indonia_match:
+                rates['indonia'] = float(indonia_match.group(1).replace(',', '.'))
+                rates['status'] = 'Live Auto-Scraped 🟢'
+            # Scrape JIBOR 3M
+            jibor_match = re.search(r'3\s*(?:Month|Bulan).*?([\d\.\,]+)', text, re.IGNORECASE)
+            if jibor_match:
+                rates['jibor_3m'] = float(jibor_match.group(1).replace(',', '.'))
+    except Exception:
+        pass
+    return rates
+
+# Panggil Scraper
+live_rates = fetch_live_bi_rates()
+
+# --- 4. SIDEBAR ---
 logo_path = "ferry.png"
 if os.path.exists(logo_path): st.sidebar.image(logo_path, use_container_width=True)
 
@@ -162,12 +180,13 @@ hist_m = get_market_history()
 sbn_val = st.sidebar.number_input("SBN 10Y Benchmark (%)", value=round(float(hist_m['SBN_10Y'].iloc[-1]), 2), step=0.01)
 bareksa_val = st.sidebar.number_input("Bareksa MM (%)", value=4.75, step=0.01)
 criec_val = st.sidebar.number_input("PHEI CRIEC Index (%)", value=7.20, step=0.01)
-indonia_val = st.sidebar.number_input("IndoNIA (Live %)", value=6.25, step=0.01)
-jibor_val = st.sidebar.number_input("JIBOR 3M (Live %)", value=6.60, step=0.01)
 
-# TOMBOL LINK KE BANK INDONESIA (BARU)
-st.sidebar.link_button("🇮🇩 BI - Data IndoNIA", "https://www.bi.go.id/id/statistik/indikator/historis-compounded-indonia-index.aspx", use_container_width=True)
-st.sidebar.link_button("🏦 BI - Referensi JIBOR", "https://www.bi.go.id/id/fungsi-utama/moneter/indonia-jibor/default.aspx", use_container_width=True)
+# INPUT YANG SUDAH TERISI OTOMATIS DARI SCRAPER
+st.sidebar.markdown(f"**Status Data BI:** `{live_rates['status']}`")
+indonia_val = st.sidebar.number_input("IndoNIA (%)", value=live_rates['indonia'], step=0.01)
+jibor_val = st.sidebar.number_input("JIBOR 3M (%)", value=live_rates['jibor_3m'], step=0.01)
+
+st.sidebar.link_button("🇮🇩 BI - Cek Web Asli", "https://www.bi.go.id/en/fungsi-utama/moneter/indonia-jibor/default.aspx", use_container_width=True)
 
 st.sidebar.link_button("🌐 Bareksa Data", "https://www.bareksa.com/id/data", use_container_width=True)
 st.sidebar.link_button("📉 PHEI (Informasi Efek)", "https://www.phei.co.id/Data/Informasi-Efek", use_container_width=True)
@@ -226,7 +245,6 @@ with tab1:
         st.subheader("📊 Resume Proyeksi Tambahan (Per Bulan)")
         df_proj = df_f.copy()
         df_proj['Yield_Net'] = df_proj['Rate'] * 0.8
-        
         df_proj['Gap_SBN'] = net_sbn - df_proj['Yield_Net']
         df_proj['Potensi_SBN'] = (df_proj['Gap_SBN'] / 100) * df_proj['Nominal'] / 12
         tot_potensi_sbn = df_proj['Potensi_SBN'].sum()
