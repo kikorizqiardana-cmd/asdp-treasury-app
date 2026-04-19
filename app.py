@@ -23,7 +23,7 @@ MONTH_LOOKUP = {
     'jul': 7, 'agu': 8, 'aug': 8, 'sep': 9, 'okt': 10, 'oct': 10, 'nov': 11, 'des': 12, 'dec': 12
 }
 
-# --- 3. ENGINE DATA (GSHEET & SCRAPER BI) ---
+# --- 3. ENGINE DATA (GSHEET) ---
 def clean_numeric_robust(val):
     if pd.isna(val): return 0.0
     val_str = str(val).strip().replace('Rp', '').replace('%', '').replace(' ', '')
@@ -116,30 +116,41 @@ def get_market_history():
     df['SBN_10Y'] = np.linspace(6.4, 6.7, len(df)) + np.random.normal(0, 0.02, len(df))
     return df
 
-# --- ENGINE SCRAPER BANK INDONESIA ---
-@st.cache_data(ttl=3600)
+# --- ENGINE SCRAPER BANK INDONESIA (UPGRADED) ---
+@st.cache_data(ttl=1800) # Cache 30 menit agar tidak diblokir BI
 def fetch_live_bi_rates():
-    rates = {'indonia': 6.25, 'jibor_3m': 6.60, 'status': 'Manual/Fallback'}
+    rates = {'indonia': 6.25, 'jibor_3m': 6.60, 'status': 'Manual/Fallback 🔴'}
     url = "https://www.bi.go.id/en/fungsi-utama/moneter/indonia-jibor/default.aspx"
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+    
+    # Headers penyamaran tingkat tinggi
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+    }
+    
     try:
-        res = requests.get(url, headers=headers, timeout=5)
+        res = requests.get(url, headers=headers, timeout=10)
         if res.status_code == 200:
-            text = res.text.replace('&nbsp;', ' ')
+            # PEMBERSIHAN HTML TOTAL
+            clean_text = re.sub(r'<[^>]+>', ' ', res.text) # Hapus semua tag HTML
+            clean_text = re.sub(r'\s+', ' ', clean_text)   # Ratakan spasi berlebih
+            
             # Scrape INDONIA
-            indonia_match = re.search(r'INDONIA\s*\(\%\)\s*([\d\.\,]+)', text, re.IGNORECASE)
+            indonia_match = re.search(r'INDONIA\s*\(\%\)\s*([\d\.\,]+)', clean_text, re.IGNORECASE)
             if indonia_match:
                 rates['indonia'] = float(indonia_match.group(1).replace(',', '.'))
                 rates['status'] = 'Live Auto-Scraped 🟢'
-            # Scrape JIBOR 3M
-            jibor_match = re.search(r'3\s*(?:Month|Bulan).*?([\d\.\,]+)', text, re.IGNORECASE)
+            
+            # Scrape JIBOR 3 Month
+            jibor_match = re.search(r'3\s*Month\s*([\d\.\,]+)', clean_text, re.IGNORECASE)
             if jibor_match:
                 rates['jibor_3m'] = float(jibor_match.group(1).replace(',', '.'))
     except Exception:
         pass
+    
     return rates
 
-# Panggil Scraper
 live_rates = fetch_live_bi_rates()
 
 # --- 4. SIDEBAR ---
@@ -181,7 +192,7 @@ sbn_val = st.sidebar.number_input("SBN 10Y Benchmark (%)", value=round(float(his
 bareksa_val = st.sidebar.number_input("Bareksa MM (%)", value=4.75, step=0.01)
 criec_val = st.sidebar.number_input("PHEI CRIEC Index (%)", value=7.20, step=0.01)
 
-# INPUT YANG SUDAH TERISI OTOMATIS DARI SCRAPER
+# STATUS & INPUT DARI SCRAPER
 st.sidebar.markdown(f"**Status Data BI:** `{live_rates['status']}`")
 indonia_val = st.sidebar.number_input("IndoNIA (%)", value=live_rates['indonia'], step=0.01)
 jibor_val = st.sidebar.number_input("JIBOR 3M (%)", value=live_rates['jibor_3m'], step=0.01)
