@@ -10,28 +10,18 @@ from datetime import datetime, timedelta
 # --- 1. KONFIGURASI HALAMAN ---
 st.set_page_config(page_title="ASDP ALM Strategic Command", layout="wide", page_icon="🚢")
 
-# --- 2. DATA MAPPING (FIXED & ROBUST) ---
+# --- 2. DATA MAPPING (ULTRA ROBUST) ---
 MONTH_MAP_ID = {
     1: 'Januari', 2: 'Februari', 3: 'Maret', 4: 'April', 5: 'Mei', 6: 'Juni',
     7: 'Juli', 8: 'Agustus', 9: 'September', 10: 'Oktober', 11: 'November', 12: 'Desember'
 }
-# Menambahkan variasi bahasa dan spasi untuk akurasi pencarian
-MONTH_MAP_REV = {
-    'Jan': 1, 'Januari': 1, 'January': 1,
-    'Feb': 2, 'Februari': 2, 'February': 2,
-    'Mar': 3, 'Maret': 3, 'March': 3,
-    'Apr': 4, 'April': 4,
-    'Mei': 5, 'Mei ': 5, 'May': 5,
-    'Jun': 6, 'Juni': 6, 'June': 6,
-    'Jul': 7, 'Juli': 7, 'July': 7,
-    'Agu': 8, 'Agustus': 8, 'August': 8,
-    'Sep': 9, 'September': 9,
-    'Okt': 10, 'Oktober': 10, 'October': 10,
-    'Nov': 11, 'November': 11,
-    'Des': 12, 'Desember': 12, 'December': 12
+# Map pencarian kata kunci (Semua Lowercase untuk Radar)
+MONTH_LOOKUP = {
+    'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'mei': 5, 'may': 5, 'jun': 6, 
+    'jul': 7, 'agu': 8, 'aug': 8, 'sep': 9, 'okt': 10, 'oct': 10, 'nov': 11, 'des': 12, 'dec': 12
 }
 
-# --- 3. ENGINE DATA (PRECISION NUMERIC & DATE) ---
+# --- 3. ENGINE DATA (PRECISION NUMERIC & DATE RADAR) ---
 def clean_numeric_robust(val):
     if pd.isna(val): return 0.0
     val_str = str(val).strip().replace('Rp', '').replace('%', '').replace(' ', '')
@@ -55,7 +45,7 @@ def load_gsheets_data():
         df_f = df_f_raw.dropna(subset=['Periode']).copy()
         df_l = df_l_raw.dropna(subset=['Periode']).copy()
 
-        # MAPPING KOLOM LENDING
+        # MAPPING KOLOM
         def map_lending_cols(c):
             norm = " ".join(str(c).strip().lower().split())
             if 'bank' in norm or 'kreditur' in norm: return 'Kreditur'
@@ -68,7 +58,6 @@ def load_gsheets_data():
 
         df_l.columns = [map_lending_cols(c) for c in df_l.columns]
         
-        # MAPPING KOLOM FUNDING
         def map_funding_cols(c):
             norm = " ".join(str(c).strip().lower().split())
             if 'rate' in norm: return 'Rate'
@@ -79,34 +68,31 @@ def load_gsheets_data():
         
         df_f.columns = [map_funding_cols(c) for c in df_f.columns]
 
-        # PEMBERSIHAN ANGKA
         for col in ['Nominal', 'Rate']:
             if col in df_f.columns: df_f[col] = df_f[col].apply(clean_numeric_robust)
         for col in ['Lending_Rate', 'Outstanding', 'Nominal_Lending']:
             if col in df_l.columns: df_l[col] = df_l[col].apply(clean_numeric_robust)
 
-        # PARSE TANGGAL
         if 'Jatuh_Tempo' in df_f.columns: df_f['Jatuh_Tempo'] = pd.to_datetime(df_f['Jatuh_Tempo'], dayfirst=True, errors='coerce')
         if 'Jatuh_Tempo' in df_l.columns: df_l['Jatuh_Tempo'] = pd.to_datetime(df_l['Jatuh_Tempo'], dayfirst=True, errors='coerce')
 
-        # PARSE BULAN & TAHUN (ULTRA ROBUST)
-        def safe_parse_month(p):
-            try:
-                # Mengambil kata pertama, strip spasi, cari di map
-                key = str(p).replace('-', ' ').strip().split()[0].capitalize()
-                return int(MONTH_MAP_REV.get(key, 0))
-            except: return 0
+        # RADAR BULAN (Keyword Based)
+        def robust_parse_month(p):
+            p_clean = str(p).lower().replace('-', ' ').strip()
+            for key, val in MONTH_LOOKUP.items():
+                if key in p_clean: return val
+            return 0
             
-        def safe_parse_year(p):
+        def robust_parse_year(p):
             try:
                 pts = str(p).replace('-', ' ').strip().split()
                 return int(pts[1]) if len(pts) > 1 else 2026
             except: return 2026
 
-        df_f['m_idx'] = df_f['Periode'].apply(safe_parse_month)
-        df_f['year_val'] = df_f['Periode'].apply(safe_parse_year)
-        df_l['m_idx'] = df_l['Periode'].apply(safe_parse_month)
-        df_l['year_val'] = df_l['Periode'].apply(safe_parse_year)
+        df_f['m_idx'] = df_f['Periode'].apply(robust_parse_month)
+        df_f['year_val'] = df_f['Periode'].apply(robust_parse_year)
+        df_l['m_idx'] = df_l['Periode'].apply(robust_parse_month)
+        df_l['year_val'] = df_l['Periode'].apply(robust_parse_year)
         
         return df_f, df_l, None
     except Exception as e:
@@ -152,7 +138,7 @@ st.title(f"🚢 ASDP Treasury & ALM Master Command Center")
 tab1, tab2, tab3 = st.tabs(["💰 Modul 1: Funding", "📈 Modul 2: Lending", "📊 Modul 3: ALM Resume"])
 
 # ==========================================
-# TAB 1: FUNDING (ORIGINAL VISUALS)
+# TAB 1: FUNDING (ORIGINAL VISUALS RESTORED)
 # ==========================================
 with tab1:
     df_f = df_f_raw[(df_f_raw['m_idx'] == s_m_idx) & (df_f_raw['year_val'] == s_y_val)].copy()
@@ -198,13 +184,13 @@ with tab1:
         st.divider()
         v1, v2 = st.columns([1.2, 1])
         with v1: st.plotly_chart(px.bar(df_f.groupby('Kreditur')['Rev_MtD'].sum().reset_index(), x='Kreditur', y='Rev_MtD', title="Revenue per Bank (MtD)", text_auto=',.0f', color='Kreditur'), use_container_width=True)
-        # KEMBALI KE PIE CHART UNTUK NOMINAL MIX
+        # KEMBALI KE PIE CHART (Sesuai Semula)
         with v2: st.plotly_chart(px.pie(df_f, values='Nominal', names='Kreditur', hole=0.5, title="Nominal Mix Placement"), use_container_width=True)
     else:
         st.warning(f"Data Funding untuk {s_m_name} {s_y_val} tidak ditemukan.")
 
 # ==========================================
-# TAB 2: LENDING (MEI & DESEMBER FIXED)
+# TAB 2: LENDING (DESEMBER & MEI FIXED)
 # ==========================================
 with tab2:
     df_l = df_l_raw[(df_l_raw['m_idx'] == s_m_idx) & (df_l_raw['year_val'] == s_y_val)].copy()
@@ -212,7 +198,6 @@ with tab2:
     df_l_ytd = df_l_raw[ytd_mask_l].copy()
 
     if not df_l.empty:
-        # Kalkulasi Akurat Pokok & Bunga
         is_bunga_mtd = df_l['Tipe'].astype(str).str.contains('bunga|margin|fee', case=False, na=False)
         mtd_bunga = df_l.loc[is_bunga_mtd, 'Nominal_Lending'].sum()
         mtd_total = df_l['Nominal_Lending'].sum()
@@ -233,7 +218,6 @@ with tab2:
         l4.metric("Avg Yield Lending", f"{avg_rt:.2f}%")
 
         st.divider()
-        # ALERT JATUH TEMPO LENDING (H-14)
         today = datetime.now()
         df_soon_l = df_l_raw[(df_l_raw['Jatuh_Tempo'] >= today) & (df_l_raw['Jatuh_Tempo'] <= today + timedelta(days=14))]
         if not df_soon_l.empty:
@@ -242,7 +226,6 @@ with tab2:
             for _, row in df_soon_agg.iterrows(): st.warning(f"🏦 **{row['Kreditur']}** | JT: `{row['Jatuh_Tempo'].strftime('%d-%m-%Y')}` | Tagihan: **Rp {row['Nominal_Lending']:,.0f}**")
             st.divider()
 
-        # Rincian Tanpa Logo
         st.subheader("🏦 Rincian Kewajiban per Kreditur")
         k_list = [k for k in df_l['Kreditur'].unique() if str(k) != '0.0' and str(k) != 'Unknown']
         if k_list:
@@ -263,7 +246,7 @@ with tab2:
             df_plot = pd.DataFrame(plot_data)
             st.plotly_chart(px.bar(df_plot, x='Kreditur', y=['Pokok', 'Bunga'], title="Breakdown Pembayaran Pokok vs Bunga", barmode='group', color_discrete_sequence=['#1f77b4', '#ff7f0e']), use_container_width=True)
     else:
-        st.warning(f"Data Lending untuk {s_m_name} {s_y_val} tidak ditemukan. Cek penulisan Periode di GSheet.")
+        st.warning(f"Data Lending untuk {s_m_name} {s_y_val} tidak ditemukan. Cek penulisan Periode di GSheet (Contoh: 'Desember 2026').")
 
 # ==========================================
 # TAB 3: ALM RESUME
