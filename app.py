@@ -44,25 +44,23 @@ def load_gsheets_data():
     sheet_id = "182zKZj0Kr56yqOGM_XW2W3Q6fhaOSo8z9TIbjC_JxxY"
     base_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet="
     try:
-        # Load and drop rows that are completely empty or missing 'Periode'
         df_f = pd.read_csv(base_url + "Funding").dropna(subset=['Periode'])
         df_l = pd.read_csv(base_url + "Lending").dropna(subset=['Periode'])
         
+        # Filter: Hanya ambil baris yang kolom Periode-nya mengandung angka (tahun)
+        # Ini buat buang baris "Keterangan" atau "Catatan" di GSheet Kiko
+        df_f = df_f[df_f['Periode'].astype(str).str.contains(r'\d', na=False)]
+        df_l = df_l[df_l['Periode'].astype(str).str.contains(r'\d', na=False)]
+
         df_f.columns = [c.strip() for c in df_f.columns]
         df_l.columns = [c.strip() for c in df_l.columns]
         
-        # Mapping Kolom Lending (Cari variasi nama)
-        l_map = {
-            'Bank': 'Kreditur', 'Kreditur': 'Kreditur',
-            'Rate': 'Lending_Rate', 'Lending Rate': 'Lending_Rate',
-            'Sisa Outstanding': 'Outstanding', 'Outstanding': 'Outstanding',
-            'Pembayaran Pokok': 'Bayar_Pokok', 'Bayar Pokok': 'Bayar_Pokok'
-        }
-        for old, new in l_map.items():
-            if old in df_l.columns and new not in df_l.columns:
-                df_l.rename(columns={old: new}, inplace=True)
+        # Smart Map Columns for Lending
+        l_map = {'Bank': 'Kreditur', 'Rate': 'Lending_Rate', 'Sisa Outstanding': 'Outstanding', 'Pembayaran Pokok': 'Bayar_Pokok'}
+        for o, n in l_map.items():
+            if o in df_l.columns and n not in df_l.columns: df_l.rename(columns={o: n}, inplace=True)
         
-        # Clean Funding Column names
+        # Clean Funding Names
         if 'Rate (%)' in df_f.columns: df_f.rename(columns={'Rate (%)': 'Rate'}, inplace=True)
         if 'Bank' in df_f.columns: df_f.rename(columns={'Bank': 'Kreditur'}, inplace=True)
         
@@ -73,11 +71,12 @@ def load_gsheets_data():
             
         def safe_parse_date(p):
             try:
-                p = str(p).replace('-', ' ').strip()
-                if not p or p == 'nan' or ' ' not in p:
-                    return pd.Series([MONTH_MAP_REV.get(p, 0), "2026"])
-                pts = p.split()
-                return pd.Series([MONTH_MAP_REV.get(pts[0], 0), pts[1] if len(pts) > 1 else "2026"])
+                p_str = str(p).replace('-', ' ').strip()
+                pts = p_str.split()
+                if not pts: return pd.Series([0, "2026"])
+                m_idx = MONTH_MAP_REV.get(pts[0], 0)
+                y_val = pts[1] if len(pts) > 1 else "2026"
+                return pd.Series([m_idx, y_val])
             except:
                 return pd.Series([0, "2026"])
 
@@ -148,7 +147,7 @@ with tab1:
         with v2: st.plotly_chart(px.pie(df_f, values='Nominal', names='Kreditur', hole=0.5, title="Nominal Mix"), use_container_width=True)
 
 # ==========================================
-# TAB 2: LENDING (ULTIMATE FIX)
+# TAB 2: LENDING (ULTIMATE STABILITY)
 # ==========================================
 with tab2:
     df_l = df_l_raw[(df_l_raw['m_idx'] == s_m_idx) & (df_l_raw['year_val'] == s_y_val)].copy()
@@ -173,7 +172,7 @@ with tab2:
                 v_pay = b_sub['Bayar_Pokok'].sum()
                 st.write(f"Rate: `{v_rate:.2f}%`")
                 st.write(f"Sisa: \nRp {v_out:,.0f}")
-                st.write(f"Bayar Pokok: \nRp {v_pay:,.0f}")
+                st.write(f"Bayar Pokok: \nRp {val_pay:,.0f}") # Fix typo val_pay
 
         st.divider()
         st.subheader(f"📊 Breakdown Pembayaran Pokok per Bank - {s_m_name}")
@@ -186,7 +185,7 @@ with tab2:
         )
         st.plotly_chart(fig_l_bar, use_container_width=True)
     else:
-        st.warning(f"Data Lending untuk {s_m_name} {s_y_val} tidak ditemukan.")
+        st.warning(f"Data Lending untuk {s_m_name} {s_y_val} belum ada di GSheets.")
 
 # ==========================================
 # TAB 3: ALM RESUME
