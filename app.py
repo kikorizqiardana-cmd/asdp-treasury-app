@@ -29,7 +29,7 @@ def get_bank_logo(bank_name):
     if 'btn' in bank_name: return "https://upload.wikimedia.org/wikipedia/commons/f/fd/Bank_BTN_logo.svg"
     return "https://cdn-icons-png.flaticon.com/512/2830/2830284.png"
 
-# --- 3. ENGINE DATA (ROBUST & CLEAN) ---
+# --- 3. ENGINE DATA (SMART MAPPING) ---
 def clean_numeric_robust(val):
     if pd.isna(val): return 0.0
     val_str = str(val).strip().replace('Rp', '').replace('%', '').replace(' ', '').replace(',', '')
@@ -47,52 +47,49 @@ def load_gsheets_data():
     try:
         df_f_raw = pd.read_csv(base_url + "Funding")
         df_l_raw = pd.read_csv(base_url + "Lending")
-        
-        # Bersihkan spasi di nama kolom
-        df_f_raw.columns = [str(c).strip() for c in df_f_raw.columns]
-        df_l_raw.columns = [str(c).strip() for c in df_l_raw.columns]
 
-        # Validasi baris: Buang yang gak ada Periode
         if 'Periode' not in df_f_raw.columns or 'Periode' not in df_l_raw.columns:
-            return pd.DataFrame(), pd.DataFrame(), "Kolom 'Periode' tidak ditemukan di GSheets."
+            return pd.DataFrame(), pd.DataFrame(), "Kolom 'Periode' hilang di GSheets."
 
         df_f = df_f_raw.dropna(subset=['Periode']).copy()
         df_l = df_l_raw.dropna(subset=['Periode']).copy()
 
-        # Rename Kolom Aman (Anti-ValueError)
-        f_rename = {'Rate (%)': 'Rate', 'Bank': 'Kreditur'}
-        l_rename = {
-            'Bank': 'Kreditur', 'Rate': 'Lending_Rate', 'Lending Rate': 'Lending_Rate', 
-            'Sisa Outstanding': 'Outstanding', 'Pembayaran Pokok': 'Bayar_Pokok'
+        # SMART COLUMN FINDER (Mengabaikan huruf besar/kecil & spasi)
+        f_map = {'rate (%)': 'Rate', 'rate': 'Rate', 'bank': 'Kreditur', 'kreditur': 'Kreditur'}
+        l_map = {
+            'bank': 'Kreditur', 'kreditur': 'Kreditur',
+            'rate': 'Lending_Rate', 'lending rate': 'Lending_Rate', 'lending_rate': 'Lending_Rate',
+            'sisa outstanding': 'Outstanding', 'sisa_outstanding': 'Outstanding', 'outstanding': 'Outstanding',
+            'pembayaran pokok': 'Bayar_Pokok', 'pembayaran_pokok': 'Bayar_Pokok', 'bayar_pokok': 'Bayar_Pokok'
         }
-        df_f = df_f.rename(columns=f_rename)
-        df_l = df_l.rename(columns=l_rename)
 
-        # Konversi Angka
+        df_f.columns = [f_map.get(str(c).strip().lower(), str(c).strip()) for c in df_f.columns]
+        df_l.columns = [l_map.get(str(c).strip().lower(), str(c).strip()) for c in df_l.columns]
+
+        # Pagar Pengaman Ekstra: Jika kolom tidak ada, buatkan biar gak error
+        for req_col in ['Outstanding', 'Bayar_Pokok', 'Lending_Rate', 'Kreditur']:
+            if req_col not in df_l.columns:
+                df_l[req_col] = 0.0 if req_col != 'Kreditur' else "Unknown"
+
+        # Pembersihan Angka
         for col in ['Nominal', 'Rate']:
-            if col in df_f.columns:
-                df_f[col] = df_f[col].apply(clean_numeric_robust)
-                
+            if col in df_f.columns: df_f[col] = df_f[col].apply(clean_numeric_robust)
         for col in ['Nominal', 'Lending_Rate', 'Outstanding', 'Bayar_Pokok']:
-            if col in df_l.columns:
-                df_l[col] = df_l[col].apply(clean_numeric_robust)
+            if col in df_l.columns: df_l[col] = df_l[col].apply(clean_numeric_robust)
 
-        # Ekstrak Bulan dan Tahun Aman
         def extract_month(p):
             try:
                 pts = str(p).replace('-', ' ').strip().split()
                 if not pts: return 0
                 return MONTH_MAP_REV.get(pts[0], 0)
-            except Exception:
-                return 0
+            except: return 0
 
         def extract_year(p):
             try:
                 pts = str(p).replace('-', ' ').strip().split()
                 if len(pts) > 1: return str(pts[1])
                 return "2026"
-            except Exception:
-                return "2026"
+            except: return "2026"
 
         df_f['m_idx'] = df_f['Periode'].apply(extract_month)
         df_f['year_val'] = df_f['Periode'].apply(extract_year)
@@ -102,7 +99,7 @@ def load_gsheets_data():
         
         return df_f, df_l, None
     except Exception as e:
-        return pd.DataFrame(), pd.DataFrame(), f"Error Data Parsing: {str(e)}"
+        return pd.DataFrame(), pd.DataFrame(), f"Error Parse: {str(e)}"
 
 @st.cache_data(ttl=3600)
 def get_market_history():
@@ -167,53 +164,45 @@ with tab1:
         st.warning(f"Data Funding untuk {s_m_name} {s_y_val} tidak ditemukan.")
 
 # ==========================================
-# TAB 2: LENDING (ULTIMATE FIX)
+# TAB 2: LENDING (FIXED & PRECISE)
 # ==========================================
 with tab2:
-    # Filter Data Lending berdasarkan pilihan kalender
     df_l = df_l_raw[(df_l_raw['m_idx'] == s_m_idx) & (df_l_raw['year_val'] == s_y_val)].copy()
 
     if not df_l.empty:
-        # Pengecekan kolom aman
-        col_out = 'Outstanding' if 'Outstanding' in df_l.columns else 'Nominal'
-        col_pay = 'Bayar_Pokok' if 'Bayar_Pokok' in df_l.columns else 'Nominal'
-        col_rate = 'Lending_Rate' if 'Lending_Rate' in df_l.columns else 'Rate'
-
         l1, l2, l3 = st.columns(3)
-        l1.metric("Total Sisa Outstanding", f"Rp {df_l[col_out].sum():,.0f}")
-        l2.metric("Avg Yield Lending (Rate)", f"{df_l[col_rate].mean():.2f}%")
-        l3.metric("Total Pembayaran Pokok", f"Rp {df_l[col_pay].sum():,.0f}")
+        l1.metric("Total Sisa Outstanding", f"Rp {df_l['Outstanding'].sum():,.0f}")
+        avg_rt = np.nan_to_num(df_l['Lending_Rate'].mean())
+        l2.metric("Avg Yield Lending (Rate)", f"{avg_rt:.2f}%")
+        l3.metric("Total Pembayaran Pokok", f"Rp {df_l['Bayar_Pokok'].sum():,.0f}")
 
         st.divider()
         st.subheader("🏦 Detail Kreditur & Pembayaran")
         
-        if 'Kreditur' in df_l.columns:
-            k_list = df_l['Kreditur'].unique()
-            bank_cols = st.columns(len(k_list) if len(k_list) > 0 else 1)
-            for i, b_name in enumerate(k_list):
-                with bank_cols[i]:
-                    st.image(get_bank_logo(b_name), width=70)
-                    b_sub = df_l[df_l['Kreditur'] == b_name]
-                    st.write(f"**{b_name}**")
-                    v_rate = b_sub[col_rate].mean()
-                    v_out = b_sub[col_out].sum()
-                    v_pay = b_sub[col_pay].sum()
-                    st.write(f"Rate: `{v_rate:.2f}%`")
-                    st.write(f"Sisa: \nRp {v_out:,.0f}")
-                    st.write(f"Bayar Pokok: \nRp {v_pay:,.0f}")
+        k_list = df_l['Kreditur'].unique()
+        bank_cols = st.columns(len(k_list) if len(k_list) > 0 else 1)
+        for i, b_name in enumerate(k_list):
+            with bank_cols[i]:
+                st.image(get_bank_logo(b_name), width=70)
+                b_sub = df_l[df_l['Kreditur'] == b_name]
+                st.write(f"**{b_name}**")
+                v_rate = np.nan_to_num(b_sub['Lending_Rate'].mean())
+                v_out = b_sub['Outstanding'].sum()
+                v_pay = b_sub['Bayar_Pokok'].sum()
+                st.write(f"Rate: `{v_rate:.2f}%`")
+                st.write(f"Sisa: \nRp {v_out:,.0f}")
+                st.write(f"Bayar Pokok: \nRp {v_pay:,.0f}")
 
-            st.divider()
-            st.subheader(f"📊 Breakdown Pembayaran Pokok per Bank - {s_m_name}")
-            fig_l_bar = px.bar(
-                df_l.groupby('Kreditur')[col_pay].sum().reset_index(),
-                x='Kreditur', y=col_pay,
-                title="Pembayaran Pokok per Bank",
-                text_auto=',.0f', color='Kreditur',
-                color_discrete_sequence=px.colors.qualitative.Pastel
-            )
-            st.plotly_chart(fig_l_bar, use_container_width=True)
-        else:
-            st.error("Kolom 'Kreditur' tidak ditemukan di data Lending.")
+        st.divider()
+        st.subheader(f"📊 Breakdown Pembayaran Pokok per Bank - {s_m_name}")
+        fig_l_bar = px.bar(
+            df_l.groupby('Kreditur')['Bayar_Pokok'].sum().reset_index(),
+            x='Kreditur', y='Bayar_Pokok',
+            title="Pembayaran Pokok per Bank",
+            text_auto=',.0f', color='Kreditur',
+            color_discrete_sequence=px.colors.qualitative.Pastel
+        )
+        st.plotly_chart(fig_l_bar, use_container_width=True)
     else:
         st.warning(f"Data Lending untuk {s_m_name} {s_y_val} tidak ditemukan.")
 
@@ -223,8 +212,7 @@ with tab2:
 with tab3:
     st.header(f"📊 ALM Strategic Intelligence - {s_m_name}")
     if not df_f.empty:
-        col_pay_alm = 'Bayar_Pokok' if 'Bayar_Pokok' in df_l_raw.columns else 'Nominal'
-        out_p = df_l[col_pay_alm].sum() if not df_l.empty else 0
+        out_p = df_l['Bayar_Pokok'].sum() if not df_l.empty else 0
         total_mtd_rev = (df_f['Nominal'] * (df_f['Rate'] / 100) / 12).sum()
         
         c1, c2, c3, c4 = st.columns(4)
