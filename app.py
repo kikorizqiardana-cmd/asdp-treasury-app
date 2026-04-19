@@ -21,15 +21,15 @@ MONTH_MAP_REV = {
 }
 
 def get_bank_logo(bank_name):
-    bank_name = str(bank_name).lower()
-    if 'mandiri' in bank_name: return "https://upload.wikimedia.org/wikipedia/commons/a/ad/Bank_Mandiri_logo_2016.svg"
-    if 'bri' in bank_name: return "https://upload.wikimedia.org/wikipedia/commons/2/2e/BRI_Logo.svg"
-    if 'bni' in bank_name: return "https://upload.wikimedia.org/wikipedia/id/5/55/BNI_logo.svg"
-    if 'bca' in bank_name: return "https://upload.wikimedia.org/wikipedia/commons/5/5c/Bank_Central_Asia.svg"
-    if 'btn' in bank_name: return "https://upload.wikimedia.org/wikipedia/commons/f/fd/Bank_BTN_logo.svg"
+    b = str(bank_name).lower()
+    if 'mandiri' in b: return "https://upload.wikimedia.org/wikipedia/commons/thumb/a/ad/Bank_Mandiri_logo_2016.svg/512px-Bank_Mandiri_logo_2016.svg.png"
+    if 'bri' in b: return "https://upload.wikimedia.org/wikipedia/commons/thumb/2/2e/BRI_Logo.svg/512px-BRI_Logo.svg.png"
+    if 'bni' in b: return "https://upload.wikimedia.org/wikipedia/id/thumb/5/55/BNI_logo.svg/512px-BNI_logo.svg.png"
+    if 'bca' in b: return "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5c/Bank_Central_Asia.svg/512px-Bank_Central_Asia.svg.png"
+    if 'btn' in b: return "https://upload.wikimedia.org/wikipedia/commons/thumb/f/fd/Bank_BTN_logo.svg/512px-Bank_BTN_logo.svg.png"
     return "https://cdn-icons-png.flaticon.com/512/2830/2830284.png"
 
-# --- 3. ENGINE DATA (SMART MAPPING) ---
+# --- 3. ENGINE DATA (PRECISION MAPPING) ---
 def clean_numeric_robust(val):
     if pd.isna(val): return 0.0
     val_str = str(val).strip().replace('Rp', '').replace('%', '').replace(' ', '').replace(',', '')
@@ -48,54 +48,40 @@ def load_gsheets_data():
         df_f_raw = pd.read_csv(base_url + "Funding")
         df_l_raw = pd.read_csv(base_url + "Lending")
 
-        if 'Periode' not in df_f_raw.columns or 'Periode' not in df_l_raw.columns:
-            return pd.DataFrame(), pd.DataFrame(), "Kolom 'Periode' hilang di GSheets."
-
         df_f = df_f_raw.dropna(subset=['Periode']).copy()
         df_l = df_l_raw.dropna(subset=['Periode']).copy()
 
-        # SMART COLUMN FINDER (Mengabaikan huruf besar/kecil & spasi)
-        f_map = {'rate (%)': 'Rate', 'rate': 'Rate', 'bank': 'Kreditur', 'kreditur': 'Kreditur'}
+        # SMART COLUMN FINDER (Case Insensitive & Multi-Format)
         l_map = {
             'bank': 'Kreditur', 'kreditur': 'Kreditur',
-            'rate': 'Lending_Rate', 'lending rate': 'Lending_Rate', 'lending_rate': 'Lending_Rate',
-            'sisa outstanding': 'Outstanding', 'sisa_outstanding': 'Outstanding', 'outstanding': 'Outstanding',
-            'pembayaran pokok': 'Bayar_Pokok', 'pembayaran_pokok': 'Bayar_Pokok', 'bayar_pokok': 'Bayar_Pokok'
+            'rate': 'Lending_Rate', 'lending rate': 'Lending_Rate',
+            'sisa outstanding': 'Outstanding', 'sisa_outstanding': 'Outstanding',
+            'pembayaran pokok': 'Bayar_Pokok', 'pembayaran_pokok': 'Bayar_Pokok',
+            'pembayaran bunga': 'Bayar_Bunga', 'pembayaran_bunga': 'Bayar_Bunga', 'bunga': 'Bayar_Bunga'
         }
 
-        df_f.columns = [f_map.get(str(c).strip().lower(), str(c).strip()) for c in df_f.columns]
         df_l.columns = [l_map.get(str(c).strip().lower(), str(c).strip()) for c in df_l.columns]
+        df_f.columns = [str(c).strip() for c in df_f.columns]
+        
+        # Funding Clean
+        if 'Rate (%)' in df_f.columns: df_f.rename(columns={'Rate (%)': 'Rate'}, inplace=True)
+        if 'Bank' in df_f.columns: df_f.rename(columns={'Bank': 'Kreditur'}, inplace=True)
 
-        # Pagar Pengaman Ekstra: Jika kolom tidak ada, buatkan biar gak error
-        for req_col in ['Outstanding', 'Bayar_Pokok', 'Lending_Rate', 'Kreditur']:
-            if req_col not in df_l.columns:
-                df_l[req_col] = 0.0 if req_col != 'Kreditur' else "Unknown"
-
-        # Pembersihan Angka
+        # Pembersihan Angka Semua Kolom Relevan
         for col in ['Nominal', 'Rate']:
             if col in df_f.columns: df_f[col] = df_f[col].apply(clean_numeric_robust)
-        for col in ['Nominal', 'Lending_Rate', 'Outstanding', 'Bayar_Pokok']:
+        for col in ['Nominal', 'Lending_Rate', 'Outstanding', 'Bayar_Pokok', 'Bayar_Bunga']:
             if col in df_l.columns: df_l[col] = df_l[col].apply(clean_numeric_robust)
 
-        def extract_month(p):
+        def safe_parse_date(p):
             try:
-                pts = str(p).replace('-', ' ').strip().split()
-                if not pts: return 0
-                return MONTH_MAP_REV.get(pts[0], 0)
-            except: return 0
+                p_str = str(p).replace('-', ' ').strip()
+                pts = p_str.split()
+                return pd.Series([MONTH_MAP_REV.get(pts[0], 0), str(pts[1])])
+            except: return pd.Series([0, "2026"])
 
-        def extract_year(p):
-            try:
-                pts = str(p).replace('-', ' ').strip().split()
-                if len(pts) > 1: return str(pts[1])
-                return "2026"
-            except: return "2026"
-
-        df_f['m_idx'] = df_f['Periode'].apply(extract_month)
-        df_f['year_val'] = df_f['Periode'].apply(extract_year)
-        
-        df_l['m_idx'] = df_l['Periode'].apply(extract_month)
-        df_l['year_val'] = df_l['Periode'].apply(extract_year)
+        df_f[['m_idx', 'year_val']] = df_f['Periode'].apply(safe_parse_date)
+        df_l[['m_idx', 'year_val']] = df_l['Periode'].apply(safe_parse_date)
         
         return df_f, df_l, None
     except Exception as e:
@@ -160,49 +146,66 @@ with tab1:
         v1, v2 = st.columns([1.2, 1])
         with v1: st.plotly_chart(px.bar(df_f.groupby('Kreditur')['Rev_MtD'].sum().reset_index(), x='Kreditur', y='Rev_MtD', title="Revenue per Bank (MtD)", text_auto=',.0f', color='Kreditur'), use_container_width=True)
         with v2: st.plotly_chart(px.pie(df_f, values='Nominal', names='Kreditur', hole=0.5, title="Nominal Mix"), use_container_width=True)
-    else:
-        st.warning(f"Data Funding untuk {s_m_name} {s_y_val} tidak ditemukan.")
 
 # ==========================================
-# TAB 2: LENDING (FIXED & PRECISE)
+# TAB 2: LENDING (PRECISION BREAKDOWN)
 # ==========================================
 with tab2:
     df_l = df_l_raw[(df_l_raw['m_idx'] == s_m_idx) & (df_l_raw['year_val'] == s_y_val)].copy()
 
     if not df_l.empty:
+        # Metrik Agregat Utama
+        col_out = 'Outstanding' if 'Outstanding' in df_l.columns else 'Nominal'
+        col_pokok = 'Bayar_Pokok' if 'Bayar_Pokok' in df_l.columns else 'Nominal'
+        col_bunga = 'Bayar_Bunga' if 'Bayar_Bunga' in df_l.columns else 'Nominal'
+        col_rate = 'Lending_Rate' if 'Lending_Rate' in df_l.columns else 'Rate'
+
         l1, l2, l3 = st.columns(3)
-        l1.metric("Total Sisa Outstanding", f"Rp {df_l['Outstanding'].sum():,.0f}")
-        avg_rt = np.nan_to_num(df_l['Lending_Rate'].mean())
+        l1.metric("Total Sisa Outstanding", f"Rp {df_l[col_out].sum():,.0f}")
+        avg_rt = np.nan_to_num(df_l[col_rate].mean())
         l2.metric("Avg Yield Lending (Rate)", f"{avg_rt:.2f}%")
-        l3.metric("Total Pembayaran Pokok", f"Rp {df_l['Bayar_Pokok'].sum():,.0f}")
+        l3.metric("Total Pembayaran (P + I)", f"Rp {(df_l[col_pokok].sum() + df_l[col_bunga].sum()):,.0f}")
 
         st.divider()
-        st.subheader("🏦 Detail Kreditur & Pembayaran")
+        st.subheader("🏦 Rincian Kewajiban per Kreditur")
         
-        k_list = df_l['Kreditur'].unique()
-        bank_cols = st.columns(len(k_list) if len(k_list) > 0 else 1)
-        for i, b_name in enumerate(k_list):
-            with bank_cols[i]:
-                st.image(get_bank_logo(b_name), width=70)
-                b_sub = df_l[df_l['Kreditur'] == b_name]
-                st.write(f"**{b_name}**")
-                v_rate = np.nan_to_num(b_sub['Lending_Rate'].mean())
-                v_out = b_sub['Outstanding'].sum()
-                v_pay = b_sub['Bayar_Pokok'].sum()
-                st.write(f"Rate: `{v_rate:.2f}%`")
-                st.write(f"Sisa: \nRp {v_out:,.0f}")
-                st.write(f"Bayar Pokok: \nRp {v_pay:,.0f}")
+        if 'Kreditur' in df_l.columns:
+            k_list = df_l['Kreditur'].unique()
+            bank_cols = st.columns(len(k_list) if len(k_list) > 0 else 1)
+            
+            for i, b_name in enumerate(k_list):
+                with bank_cols[i]:
+                    st.image(get_bank_logo(b_name), width=90)
+                    b_sub = df_l[df_l['Kreditur'] == b_name]
+                    
+                    v_rate = np.nan_to_num(b_sub[col_rate].mean())
+                    v_out = b_sub[col_out].sum()
+                    v_pokok = b_sub[col_pokok].sum()
+                    v_bunga = b_sub[col_bunga].sum()
+                    
+                    st.markdown(f"### **{b_name}**")
+                    st.caption(f"Rate: {v_rate:.2f}%")
+                    st.markdown(f"""
+                    * **Sisa Outstanding:** Rp {v_out:,.0f}
+                    * **Pembayaran Pokok:** Rp {v_pokok:,.0f}
+                    * **Pembayaran Bunga:** Rp {v_bunga:,.0f}
+                    ---
+                    **Tagihan Bulan Ini: Rp {(v_pokok + v_bunga):,.0f}**
+                    """)
 
-        st.divider()
-        st.subheader(f"📊 Breakdown Pembayaran Pokok per Bank - {s_m_name}")
-        fig_l_bar = px.bar(
-            df_l.groupby('Kreditur')['Bayar_Pokok'].sum().reset_index(),
-            x='Kreditur', y='Bayar_Pokok',
-            title="Pembayaran Pokok per Bank",
-            text_auto=',.0f', color='Kreditur',
-            color_discrete_sequence=px.colors.qualitative.Pastel
-        )
-        st.plotly_chart(fig_l_bar, use_container_width=True)
+            st.divider()
+            st.subheader(f"📊 Eksposisi Pembayaran per Bank - {s_m_name}")
+            df_plot = df_l.groupby('Kreditur').agg({col_pokok: 'sum', col_bunga: 'sum'}).reset_index()
+            df_plot['Total_Bayar'] = df_plot[col_pokok] + df_plot[col_bunga]
+            
+            fig_l_bar = px.bar(
+                df_plot,
+                x='Kreditur', y=[col_pokok, col_bunga],
+                title="Breakdown Pembayaran Pokok & Bunga",
+                text_auto=',.0f', barmode='group',
+                color_discrete_sequence=['#1f77b4', '#aec7e8']
+            )
+            st.plotly_chart(fig_l_bar, use_container_width=True)
     else:
         st.warning(f"Data Lending untuk {s_m_name} {s_y_val} tidak ditemukan.")
 
@@ -212,14 +215,14 @@ with tab2:
 with tab3:
     st.header(f"📊 ALM Strategic Intelligence - {s_m_name}")
     if not df_f.empty:
-        out_p = df_l['Bayar_Pokok'].sum() if not df_l.empty else 0
+        out_total = (df_l[col_pokok].sum() + df_l[col_bunga].sum()) if not df_l.empty else 0
         total_mtd_rev = (df_f['Nominal'] * (df_f['Rate'] / 100) / 12).sum()
         
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Interest Revenue", f"Rp {total_mtd_rev:,.0f}")
-        c2.metric("Cash Out (Pokok)", f"Rp {out_p:,.0f}")
-        c3.metric("Net Flow Gap", f"Rp {total_mtd_rev - out_p:,.0f}")
-        c4.metric("ICR Strength", f"{(total_mtd_rev/out_p if out_p > 0 else 0):.2f}x")
+        c2.metric("Total Cash Out (P+I)", f"Rp {out_total:,.0f}")
+        c3.metric("Net Flow Gap", f"Rp {total_mtd_rev - out_total:,.0f}")
+        c4.metric("ICR Strength", f"{(total_mtd_rev/out_total if out_total > 0 else 0):.2f}x")
         st.divider()
         plot_df = hist_m.copy()
         plot_df['Bareksa'] = plot_df['SBN_10Y'] * (bareksa_val / (sbn_val if sbn_val != 0 else 1))
