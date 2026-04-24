@@ -163,9 +163,9 @@ def get_market_history(live_indonia, live_jibor):
     df['JIBOR_3M'] = np.linspace(live_jibor - 0.3, live_jibor, len(df)) + np.random.normal(0, 0.015, len(df))
     return df
 
-# --- ENGINE MODUL 4 ---
-@st.cache_data(ttl=3600)
-def fetch_global_market_data_v2():
+# --- ENGINE MODUL 4 (UPDATE SETIAP 5 MENIT!) ---
+@st.cache_data(ttl=300) # Diubah menjadi 300 detik (5 menit) agar data lebih fresh
+def fetch_global_market_data_v3():
     tickers = {
         'IHSG': '^JKSE', 'S&P 500': '^GSPC', 'FTSE 100': '^FTSE',
         'USD/IDR': 'IDR=X', 'EUR/IDR': 'EURIDR=X', 'JPY/IDR': 'JPYIDR=X',
@@ -458,11 +458,11 @@ with tab3:
         st.info("Menunggu data sinkronisasi untuk menampilkan Resume ALM.")
 
 # ==========================================
-# TAB 4: GLOBAL MARKET & FX (TIMELINE UPDATED)
+# TAB 4: GLOBAL MARKET & FX (WITH X-AXIS MARGIN FIX)
 # ==========================================
 with tab4:
     st.header("🌍 Global Market & FX Real-Time Monitor (1-Month Trend)")
-    g_data = fetch_global_market_data_v2()
+    g_data = fetch_global_market_data_v3()
     
     def render_sparkline_widget(col_obj, title, dict_key, prefix="", is_inverse=False):
         with col_obj:
@@ -489,15 +489,16 @@ with tab4:
                     hovertemplate="%{x|%d %b %Y}<br>Value: " + prefix + "%{y:,.2f}<extra></extra>"
                 ))
                 
+                # --- PERBAIKAN MARGIN ADA DI SINI ---
                 fig.update_layout(
-                    margin=dict(l=0, r=0, t=5, b=0),
-                    height=80, # Sedikit lebih tinggi biar timeline gak sesak
+                    margin=dict(l=0, r=0, t=5, b=25), # Margin bawah (b=25) agar teks tanggal muat!
+                    height=90, # Ketinggian ditambah agar tidak gepeng
                     xaxis=dict(
                         visible=True, 
                         showgrid=False, 
-                        tickfont=dict(size=9, color='gray'),
+                        tickfont=dict(size=10, color='gray'),
                         showticklabels=True,
-                        nticks=3, # Tampilkan 3 label tanggal saja (awal, tengah, akhir)
+                        nticks=4, # Menampilkan sekitar 4 titik tanggal
                         tickformat="%d %b"
                     ),
                     yaxis=dict(visible=False, showgrid=False),
@@ -524,4 +525,4 @@ with tab4:
     render_sparkline_widget(oil, "🛢️ Brent Crude Oil", 'Brent Oil', prefix="USD ", is_inverse=True)
 
     st.divider()
-    st.info("💡 **Tips Strategic:** Grafik menampilkan tren pergerakan 1 bulan terakhir dengan indikator periode tanggal. Kenaikan tajam pada **Brent Oil** dan **USD/IDR** adalah sinyal waspada bagi manajemen arus kas operasional armada.")
+    st.info("💡 **Tips Strategic:** Grafik menampilkan tren pergerakan 1 bulan terakhir dengan indikator periode tanggal (Data ditarik setiap 5 menit). Kenaikan tajam pada **Brent Oil** dan **USD/IDR** adalah sinyal waspada bagi manajemen arus kas operasional armada.")
