@@ -371,7 +371,7 @@ with tab2:
         st.warning(f"Data Lending untuk {s_m_name} {s_y_val} tidak ditemukan.")
 
 # ==========================================
-# TAB 3: ALM RESUME (LOCKED & LEGEND UPDATED)
+# TAB 3: ALM RESUME (LOCKED)
 # ==========================================
 with tab3:
     st.header(f"📊 ALM Strategic Intelligence - {s_m_name}")
@@ -439,7 +439,6 @@ with tab3:
         plot_df['PHEI'] = plot_df['SBN_10Y'] * (criec_val / (sbn_val if sbn_val != 0 else 1))
         
         f_alm = go.Figure()
-        # LEGENDA SEKARANG MENAMPILKAN ANGKA PERSENTASE
         f_alm.add_trace(go.Scatter(x=plot_df.index, y=plot_df['SBN_10Y'], name=f'SBN 10Y ({sbn_val:.2f}%)', line=dict(color='blue', width=3)))
         f_alm.add_trace(go.Scatter(x=plot_df.index, y=plot_df['Bareksa'], name=f'Bareksa MM ({bareksa_val:.2f}%)', line=dict(color='orange', width=2)))
         f_alm.add_trace(go.Scatter(x=plot_df.index, y=plot_df['PHEI'], name=f'PHEI CRIEC Index ({criec_val:.2f}%)', line=dict(color='red', width=3)))
@@ -459,7 +458,7 @@ with tab3:
         st.info("Menunggu data sinkronisasi untuk menampilkan Resume ALM.")
 
 # ==========================================
-# TAB 4: GLOBAL MARKET & FX SPARKLINE
+# TAB 4: GLOBAL MARKET & FX (TIMELINE UPDATED)
 # ==========================================
 with tab4:
     st.header("🌍 Global Market & FX Real-Time Monitor (1-Month Trend)")
@@ -486,13 +485,21 @@ with tab4:
                     x=hist_data.index, 
                     y=hist_data['Close'],
                     mode='lines', 
-                    line=dict(color=c_color, width=2.5)
+                    line=dict(color=c_color, width=2.5),
+                    hovertemplate="%{x|%d %b %Y}<br>Value: " + prefix + "%{y:,.2f}<extra></extra>"
                 ))
                 
                 fig.update_layout(
                     margin=dict(l=0, r=0, t=5, b=0),
-                    height=60,
-                    xaxis=dict(visible=False, showgrid=False),
+                    height=80, # Sedikit lebih tinggi biar timeline gak sesak
+                    xaxis=dict(
+                        visible=True, 
+                        showgrid=False, 
+                        tickfont=dict(size=9, color='gray'),
+                        showticklabels=True,
+                        nticks=3, # Tampilkan 3 label tanggal saja (awal, tengah, akhir)
+                        tickformat="%d %b"
+                    ),
                     yaxis=dict(visible=False, showgrid=False),
                     plot_bgcolor='rgba(0,0,0,0)',
                     paper_bgcolor='rgba(0,0,0,0)',
@@ -517,4 +524,4 @@ with tab4:
     render_sparkline_widget(oil, "🛢️ Brent Crude Oil", 'Brent Oil', prefix="USD ", is_inverse=True)
 
     st.divider()
-    st.info("💡 **Tips Strategic:** Grafik menampilkan tren pergerakan 1 bulan terakhir. Perhatikan lonjakan pada **Brent Oil** dan **USD/IDR**, kenaikan pada instrumen ini dapat memicu eskalasi biaya operasional pengadaan *spareparts* dan BBM armada.")
+    st.info("💡 **Tips Strategic:** Grafik menampilkan tren pergerakan 1 bulan terakhir dengan indikator periode tanggal. Kenaikan tajam pada **Brent Oil** dan **USD/IDR** adalah sinyal waspada bagi manajemen arus kas operasional armada.")
