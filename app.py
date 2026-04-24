@@ -33,6 +33,7 @@ TITLE_MAP = {
     'EUR/IDR': '🇪🇺 EUR / IDR',
     'JPY/IDR': '🇯🇵 JPY / IDR',
     'SGD/IDR': '🇸🇬 SGD / IDR',
+    'CNY/IDR': '🇨🇳 CNY / IDR (RMB)',
     'Brent Oil': '🛢️ Brent Crude Oil',
     'Gold': '🥇 Gold (XAU/USD)'
 }
@@ -177,14 +178,14 @@ def get_market_history(live_indonia, live_jibor):
     df['JIBOR_3M'] = np.linspace(live_jibor - 0.3, live_jibor, len(df)) + np.random.normal(0, 0.015, len(df))
     return df
 
-# --- ENGINE MODUL 4 (SISTEM ANTI-FIREWALL MUTAKHIR) ---
+# --- ENGINE MODUL 4 (SISTEM ANTI-FIREWALL MUTAKHIR + RMB/CNY) ---
 @st.cache_data(ttl=300) 
-def fetch_global_market_data_v5():
+def fetch_global_market_data_v6(): # Naik versi cache agar memori lama hilang
     tickers = {
         'IHSG': '^JKSE', 'S&P 500': '^GSPC', 'FTSE 100': '^FTSE',
         'Nikkei 225': '^N225', 'Hang Seng': '^HSI',
         'USD/IDR': 'IDR=X', 'EUR/IDR': 'EURIDR=X', 'JPY/IDR': 'JPYIDR=X',
-        'SGD/IDR': 'SGDIDR=X', 'Brent Oil': 'BZ=F', 'Gold': 'GC=F'
+        'SGD/IDR': 'SGDIDR=X', 'CNY/IDR': 'CNYIDR=X', 'Brent Oil': 'BZ=F', 'Gold': 'GC=F'
     }
     
     # Nilai dasar realistis jika Yahoo Finance diblokir firewall kantor
@@ -192,7 +193,7 @@ def fetch_global_market_data_v5():
         'IHSG': 7250.50, 'S&P 500': 5120.30, 'FTSE 100': 7950.10,
         'Nikkei 225': 39100.0, 'Hang Seng': 16550.0,
         'USD/IDR': 15950.0, 'EUR/IDR': 17250.0, 'JPY/IDR': 104.5,
-        'SGD/IDR': 11820.0, 'Brent Oil': 86.50, 'Gold': 2340.0
+        'SGD/IDR': 11820.0, 'CNY/IDR': 2225.0, 'Brent Oil': 86.50, 'Gold': 2340.0
     }
     
     data_results = {}
@@ -502,11 +503,11 @@ with tab3:
         st.info("Menunggu data sinkronisasi untuk menampilkan Resume ALM.")
 
 # ==========================================
-# TAB 4: GLOBAL MARKET (INTERACTIVE DROPDOWN)
+# TAB 4: GLOBAL MARKET (RMB INCLUDED!)
 # ==========================================
 with tab4:
     st.header("🌍 Global Market & FX Real-Time Monitor (1-Month Trend)")
-    g_data = fetch_global_market_data_v5() # MEMANGGIL MESIN ANTI-FIREWALL
+    g_data = fetch_global_market_data_v6()
     
     def render_sparkline_widget(col_obj, title, dict_key, prefix="", is_inverse=False):
         with col_obj:
@@ -552,7 +553,6 @@ with tab4:
                 
                 st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
     
-    # --- BAGIAN 1: STOCK INDICES MULTISELECT ---
     st.subheader("📈 Stock Indices")
     avail_indices = ['IHSG', 'S&P 500', 'FTSE 100', 'Nikkei 225', 'Hang Seng']
     sel_indices = st.multiselect(
@@ -570,13 +570,13 @@ with tab4:
     
     st.divider()
     
-    # --- BAGIAN 2: FX & COMMODITIES MULTISELECT ---
     st.subheader("💵 Forex & Commodities")
-    avail_fx = ['USD/IDR', 'EUR/IDR', 'JPY/IDR', 'SGD/IDR', 'Brent Oil', 'Gold']
+    # RMB SEKARANG TERSEDIA DI SINI
+    avail_fx = ['USD/IDR', 'EUR/IDR', 'JPY/IDR', 'SGD/IDR', 'CNY/IDR', 'Brent Oil', 'Gold']
     sel_fx = st.multiselect(
         "Pilih Valas & Komoditas yang ingin dipantau:", 
         options=avail_fx, 
-        default=['USD/IDR', 'EUR/IDR', 'JPY/IDR', 'Brent Oil']
+        default=['USD/IDR', 'EUR/IDR', 'JPY/IDR', 'CNY/IDR', 'Brent Oil'] # Tampil secara default!
     )
     
     if sel_fx:
@@ -586,10 +586,9 @@ with tab4:
             elif 'Oil' in fx_name or 'Gold' in fx_name: prefix = "USD "
             else: prefix = ""
             
-            # Asumsi default untuk biaya operasional ASDP: harga naik = merah (inverse)
             render_sparkline_widget(cols_fx[i], TITLE_MAP[fx_name], fx_name, prefix=prefix, is_inverse=True)
     else:
         st.info("Pilih minimal satu instrumen Valas/Komoditas dari menu dropdown di atas.")
 
     st.divider()
-    st.info("💡 **Tips Strategic:** Grafik menampilkan tren pergerakan 1 bulan terakhir. Anda dapat menambahkan atau mengurangi instrumen dari menu dropdown sesuai dengan kebutuhan pemantauan manajemen risiko nilai tukar.")
+    st.info("💡 **Tips Strategic:** Anda dapat menambahkan instrumen seperti **CNY/IDR (RMB)** untuk memantau nilai tukar pengadaan suku cadang kapal dari manufaktur Asia Timur. Kenaikan tajam (warna merah) adalah sinyal untuk merevisi *budget* pengadaan (CAPEX).")
