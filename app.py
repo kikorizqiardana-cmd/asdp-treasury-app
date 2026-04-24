@@ -163,7 +163,7 @@ def get_market_history(live_indonia, live_jibor):
     df['JIBOR_3M'] = np.linspace(live_jibor - 0.3, live_jibor, len(df)) + np.random.normal(0, 0.015, len(df))
     return df
 
-# --- ENGINE MODUL 4 (BYPASS CACHE DENGAN NAMA BARU v2) ---
+# --- ENGINE MODUL 4 ---
 @st.cache_data(ttl=3600)
 def fetch_global_market_data_v2():
     tickers = {
@@ -371,7 +371,7 @@ with tab2:
         st.warning(f"Data Lending untuk {s_m_name} {s_y_val} tidak ditemukan.")
 
 # ==========================================
-# TAB 3: ALM RESUME (LOCKED)
+# TAB 3: ALM RESUME (LOCKED & LEGEND UPDATED)
 # ==========================================
 with tab3:
     st.header(f"📊 ALM Strategic Intelligence - {s_m_name}")
@@ -439,14 +439,15 @@ with tab3:
         plot_df['PHEI'] = plot_df['SBN_10Y'] * (criec_val / (sbn_val if sbn_val != 0 else 1))
         
         f_alm = go.Figure()
-        f_alm.add_trace(go.Scatter(x=plot_df.index, y=plot_df['SBN_10Y'], name='SBN 10Y', line=dict(color='blue', width=3)))
-        f_alm.add_trace(go.Scatter(x=plot_df.index, y=plot_df['Bareksa'], name='Bareksa MM', line=dict(color='orange', width=2)))
-        f_alm.add_trace(go.Scatter(x=plot_df.index, y=plot_df['PHEI'], name='PHEI Bond Index', line=dict(color='red', width=3)))
+        # LEGENDA SEKARANG MENAMPILKAN ANGKA PERSENTASE
+        f_alm.add_trace(go.Scatter(x=plot_df.index, y=plot_df['SBN_10Y'], name=f'SBN 10Y ({sbn_val:.2f}%)', line=dict(color='blue', width=3)))
+        f_alm.add_trace(go.Scatter(x=plot_df.index, y=plot_df['Bareksa'], name=f'Bareksa MM ({bareksa_val:.2f}%)', line=dict(color='orange', width=2)))
+        f_alm.add_trace(go.Scatter(x=plot_df.index, y=plot_df['PHEI'], name=f'PHEI CRIEC Index ({criec_val:.2f}%)', line=dict(color='red', width=3)))
         
         if 'IndoNIA' in plot_df.columns:
-            f_alm.add_trace(go.Scatter(x=plot_df.index, y=plot_df['IndoNIA'], name=f'IndoNIA ({indonia_val}%)', line=dict(color='purple', dash='dash', width=2)))
+            f_alm.add_trace(go.Scatter(x=plot_df.index, y=plot_df['IndoNIA'], name=f'IndoNIA ({indonia_val:.2f}%)', line=dict(color='purple', dash='dash', width=2)))
         if 'JIBOR_3M' in plot_df.columns:
-            f_alm.add_trace(go.Scatter(x=plot_df.index, y=plot_df['JIBOR_3M'], name=f'JIBOR 3M ({jibor_val}%)', line=dict(color='green', dash='dot', width=2)))
+            f_alm.add_trace(go.Scatter(x=plot_df.index, y=plot_df['JIBOR_3M'], name=f'JIBOR 3M ({jibor_val:.2f}%)', line=dict(color='green', dash='dot', width=2)))
         
         f_alm.update_layout(
             hovermode="x unified",
